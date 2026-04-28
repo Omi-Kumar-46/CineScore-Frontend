@@ -2,7 +2,17 @@
    CINESCORE MASTER ENGINE v5.0 (OPTIMIZED & SAFE)
    ============================================================ */
 
-// 1. THE GLOBAL DOM CACHE — populated inside DOMContentLoaded so elements exist
+// 0. UTILITIES
+function debounce(func, wait) {
+    let timeout;
+    return function(...args) {
+        const context = this;
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(context, args), wait);
+    };
+}
+
+// 1. THE GLOBAL DOM CACHE
 const CineDOM = {
     loader: null,
     authModal: null,
@@ -18,6 +28,90 @@ window.CineState = {
     isLoggedIn: localStorage.getItem('cs_logged_in') === 'true',
     activeTheme: localStorage.getItem('cs_theme') || 'dark',
     currentView: 'SEARCH' // 'SEARCH' or 'RESULTS'
+};
+
+// 2.3 THE GENRE DICTIONARY (TMDB Mapping)
+const GENRE_MAP = {
+    28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime",
+    99: "Doc", 18: "Drama", 10751: "Family", 14: "Fantasy", 36: "History",
+    27: "Horror", 10402: "Music", 9648: "Mystery", 10749: "Romance", 878: "Sci-Fi",
+    10770: "TV Movie", 53: "Thriller", 10752: "War", 37: "Western"
+};
+
+// 2.5 THE CINE-API BRIDGE (Master Integration)
+window.CineAPI = {
+    BASE_URL: "http://127.0.0.1:8000",
+
+    async predict(pitchData) {
+        try {
+            const resp = await fetch(`${this.BASE_URL}/predict`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(pitchData)
+            });
+            if (!resp.ok) throw new Error("API Predict Failed");
+            return await resp.json();
+        } catch (e) {
+            console.error("CineAPI Predict Error:", e);
+            return null;
+        }
+    },
+
+    async searchShowdown(query) {
+        try {
+            const resp = await fetch(`${this.BASE_URL}/search_showdown?title=${encodeURIComponent(query)}`);
+            if (!resp.ok) throw new Error("API Search Failed");
+            return await resp.json();
+        } catch (e) {
+            console.error("CineAPI Search Error:", e);
+            return [];
+        }
+    },
+
+    async getTrending() {
+        try {
+            const resp = await fetch(`${this.BASE_URL}/trending_predictions`);
+            if (!resp.ok) throw new Error("API Trending Failed");
+            return await resp.json();
+        } catch (e) {
+            console.error("CineAPI Trending Error:", e);
+            return [];
+        }
+    }
+};
+
+// 2.6 THE TMDB VISUAL ENGINE (Sequence 1 - SECURED via Backend Proxy)
+window.TMDB_API = {
+    // SECURITY: TOKEN is now stored in main.py. Frontend calls backend proxy.
+    BASE_URL: "http://127.0.0.1:8000/tmdb", 
+    IMG_URL: "https://image.tmdb.org/t/p/w500",
+
+    async fetch(endpoint, params = "") {
+        try {
+            const url = `${this.BASE_URL}/${endpoint}?${params}`;
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error(`TMDB Proxy Failed: ${resp.status}`);
+            return await resp.json();
+        } catch (e) {
+            console.error("TMDB Proxy Error:", e);
+            return null; // Return null to trigger fallback logic in callers
+        }
+    },
+
+    async searchMovies(query) {
+        const results = await this.fetch("search", `query=${encodeURIComponent(query)}`);
+        return results || [];
+    },
+
+    async getUpcoming() {
+        const results = await this.fetch("upcoming", "");
+        return results || [];
+    },
+
+    async discoverReleased(genreId) {
+        const results = await this.fetch("discover", `genre_id=${genreId}`);
+        return results || [];
+    }
 };
 
 // 3. MASTER AUTH CONTROLLER (Fixes silent fails)
@@ -45,19 +139,164 @@ document.addEventListener('DOMContentLoaded', () => {
     CineDOM.mainSearch   = document.getElementById('default-view-search-input') || document.querySelector('.search-input');
     CineDOM.contentSlider = document.querySelector('.content-slider');
 
+    // ============================================================
+    // HERO SEARCH — Wired directly here (scope-safe, mock-first)
+    // ============================================================
+    (function() {
+        const heroInput = document.getElementById('hero-search');
+        const heroBtn = document.getElementById('hero-predict-btn');
+        const heroClearBtn = document.getElementById('hero-search-clear');
+        const heroDropdown = document.getElementById('search-dropdown');
+
+        if (!heroInput || !heroDropdown) return;
+
+        const renderHeroResults = (matches, isSyncing) => {
+            heroDropdown.innerHTML = '';
+            heroDropdown.style.cssText = 'display:block!important; visibility:visible!important; opacity:1!important;';
+
+            if (matches.length === 0) {
+                if (!isSyncing) {
+                    heroDropdown.innerHTML = '<li class="search-item" style="padding:24px;text-align:center;opacity:0.6;"><i class="fa-solid fa-film" style="margin-right:8px;"></i>No matches found.</li>';
+                }
+                return;
+            }
+
+            if (isSyncing) {
+                const badge = document.createElement('div');
+                badge.style.cssText = 'padding:8px 14px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--color-accent);display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,255,255,0.06);';
+                badge.innerHTML = '<span style="width:6px;height:6px;background:var(--color-accent);border-radius:50%;box-shadow:0 0 8px var(--color-accent);display:inline-block;"></span> Syncing Live Data...';
+                heroDropdown.appendChild(badge);
+            }
+
+            matches.forEach(movie => {
+                const li = document.createElement('li');
+                li.className = 'search-item';
+                const imgUrl = (movie.poster_path && window.TMDB_API) ? `${window.TMDB_API.IMG_URL}${movie.poster_path}` : (movie.poster || 'https://placehold.co/42x60/111/FFF?text=Film');
+                const yr = (movie.release_date || '').split('-')[0] || movie.year || 'TBA';
+                const genreList = Array.isArray(movie.genres) ? movie.genres.slice(0, 2).join(' / ') : (movie.genres || 'Cinema');
+                li.innerHTML = `<img class="search-poster" src="${imgUrl}" style="width:42px;height:60px;object-fit:cover;border-radius:4px;flex-shrink:0;" onerror="this.src='https://placehold.co/42x60/111/FFF?text=Film'"><div style="flex:1;min-width:0;text-align:left;"><h4 class="search-title" style="margin:0 0 2px 0;font-size:14px;font-weight:600;color:var(--color-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${movie.title}</h4><span style="font-size:11px;color:var(--color-secondary);display:block;">${yr} · ${genreList}</span></div><i class="fa-solid fa-magnifying-glass-arrow-right search-right-icon" style="font-size:18px;opacity:0.35;flex-shrink:0;margin-left:10px;color:var(--color-accent);"></i>`;
+                li.addEventListener('click', () => {
+                    heroInput.value = movie.title;
+                    heroDropdown.style.display = 'none';
+                    // Store full movie context for Prediction page
+                    const moviePayload = {
+                        title: movie.title,
+                        poster: imgUrl,
+                        year: yr,
+                        genres: movie.genres || [],
+                        aiScore: movie.aiScore || null,
+                        release_date: movie.release_date || null,
+                        synopsis: movie.synopsis || movie.overview || ''
+                    };
+                    localStorage.setItem('cinescore_active_movie_data', JSON.stringify(moviePayload));
+                    sessionStorage.setItem('cineScore_activePrediction', movie.title);
+                    // Show splash & navigate
+                    const splash = document.getElementById('splash-loader');
+                    if (splash) splash.style.display = 'flex';
+                    setTimeout(() => { window.location.href = 'Prediction.html'; }, 800);
+                });
+                heroDropdown.appendChild(li);
+            });
+        };
+
+        let heroSearchTimeout;
+        heroInput.addEventListener('input', (e) => {
+            const val = e.target.value.trim();
+            const query = val.toLowerCase();
+            clearTimeout(heroSearchTimeout);
+
+            if (heroClearBtn) heroClearBtn.style.display = val.length > 0 ? 'block' : 'none';
+
+            if (val.length === 1) {
+                heroDropdown.innerHTML = '<li style="padding:16px;text-align:center;font-size:12px;opacity:0.6;color:var(--color-secondary);">Type at least 2 characters to search...</li>';
+                heroDropdown.style.display = 'block';
+                return;
+            }
+            if (val.length < 1) {
+                heroDropdown.style.display = 'none';
+                return;
+            }
+
+            // 1. Instant UI Feedback (Zero Latency)
+            heroDropdown.innerHTML = '';
+            heroDropdown.style.cssText = 'display:block!important; visibility:visible!important; opacity:1!important;';
+            const badge = document.createElement('div');
+            badge.style.cssText = 'padding:8px 14px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--color-accent);display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,255,255,0.06);';
+            badge.innerHTML = '<span style="width:6px;height:6px;background:var(--color-accent);border-radius:50%;box-shadow:0 0 8px var(--color-accent);display:inline-block;"></span> Live Database Syncing...';
+            heroDropdown.appendChild(badge);
+
+            // 2. Debounced API Call
+            heroSearchTimeout = setTimeout(async () => {
+                if (window.TMDB_API && typeof window.TMDB_API.searchMovies === 'function') {
+                    try {
+                        const live = await window.TMDB_API.searchMovies(query);
+                        
+                        // 3. Prevent Race Conditions (Stale Data Check)
+                        if (heroInput.value.trim().toLowerCase() !== query) return;
+
+                        if (live && live.length > 0) {
+                            renderHeroResults(live.slice(0, 8), false);
+                        } else {
+                            const mocks = (window.mockMovies || []).filter(m => m.title.toLowerCase().includes(query)).slice(0, 5);
+                            renderHeroResults(mocks, false);
+                        }
+                    } catch (err) {
+                        if (heroInput.value.trim().toLowerCase() !== query) return;
+                        const mocks = (window.mockMovies || []).filter(m => m.title.toLowerCase().includes(query)).slice(0, 5);
+                        renderHeroResults(mocks, false);
+                    }
+                } else {
+                    const mocks = (window.mockMovies || []).filter(m => m.title.toLowerCase().includes(query)).slice(0, 5);
+                    renderHeroResults(mocks, false);
+                }
+            }, 400);
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!heroDropdown.contains(e.target) && e.target !== heroInput) {
+                heroDropdown.style.display = 'none';
+            }
+        });
+
+        if (typeof attachKeyboardNav === 'function') attachKeyboardNav(heroInput, heroDropdown);
+
+        if (heroClearBtn) {
+            heroClearBtn.addEventListener('click', () => { 
+                heroInput.value = ''; 
+                heroDropdown.style.display = 'none'; 
+                heroClearBtn.style.display = 'none'; 
+                heroInput.focus(); 
+            });
+        }
+
+        if (heroBtn) {
+            heroBtn.addEventListener('click', () => {
+                const title = heroInput.value.trim();
+                if (!title) return;
+                sessionStorage.setItem('cineScore_activePrediction', title);
+                const splash = document.getElementById('splash-loader');
+                if (splash) splash.style.display = 'flex';
+                setTimeout(() => { window.location.href = 'Prediction.html'; }, 800);
+            });
+        }
+    })();
+
     // Wake up Core Systems
     initLoaderSystem();
     if (typeof initThemeEngine === 'function') initThemeEngine();
     if (typeof initAuthLogic === 'function') initAuthLogic();
     if (typeof initGlobalInteractions === 'function') initGlobalInteractions();
+    if (typeof initDefaultSearch === 'function') initDefaultSearch();
 
     // Wake up Page-Specific Logic (Prediction page only)
     if (CineDOM.resultsView) {
-        if (typeof initAlgorithmEngine === 'function') initAlgorithmEngine(); // routing state
-        if (typeof initSliderMathEngine === 'function') initSliderMathEngine(); // slider rendering
+        if (typeof initAlgorithmEngine === 'function') initAlgorithmEngine();
+        if (typeof initSliderMathEngine === 'function') initSliderMathEngine();
         if (typeof initShowdownSearch === 'function') initShowdownSearch();
-        initNavigationFeatures(); // Shortcuts & Scroll FAB
+        initNavigationFeatures();
     }
+
+    // Legacy syncTMDBVisuals removed to prevent conflicts with UniversalDailyRotations
 });
 
 // ============================================================
@@ -73,7 +312,9 @@ function initNavigationFeatures() {
             const possibleSearches = [
                 document.getElementById('hero-search-input'),      // Prediction Result page
                 document.getElementById('default-view-search-input'), // Prediction Hub page
-                document.querySelector('.search-input')              // Dashboard generic search
+                document.querySelector('.search-input'),              
+                document.querySelector('input[type="search"]'),
+                document.querySelector('input[name="q"]')
             ];
             
             for (let input of possibleSearches) {
@@ -355,6 +596,23 @@ window.addEventListener('popstate', (e) => {
 window.triggerPredictionState = function (movieName) {
     if (!movieName.trim()) return;
 
+    // Clean search inputs and close dropdowns globally
+    ['default-view-search-input', 'result-view-search-input', 'hubSearch', 'opponent-search-input'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) {
+            input.value = '';
+            // Close clear buttons natively associated
+            if (id === 'default-view-search-input') { const clr = document.getElementById('default-view-search-clear'); if (clr) clr.style.display = 'none'; }
+            if (id === 'result-view-search-input') { const clr = document.getElementById('pred-clear-btn'); if (clr) clr.style.display = 'none'; }
+            if (id === 'hubSearch') { const clr = document.getElementById('hub-clear-search'); if (clr) clr.classList.add('hidden'); }
+            if (id === 'opponent-search-input') { const clr = document.getElementById('showdown-search-clear'); if (clr) clr.style.display = 'none'; }
+        }
+    });
+    ['default-view-search-dropdown', 'result-view-search-dropdown', 'hubSearchDropdown', 'opponent-search-dropdown'].forEach(id => {
+        const dd = document.getElementById(id);
+        if (dd) dd.style.display = 'none';
+    });
+
     sessionStorage.setItem('cineScore_activePrediction', movieName);
 
     // THE FIX: Push URL instantly so the browser knows we changed pages!
@@ -417,54 +675,60 @@ document.addEventListener("DOMContentLoaded", () => {
     // ==========================================
     // THE LIVE HYPE METER ENGINE (Daily Rotation)
     // ==========================================
-    function initLiveHypeMeter() {
+    async function initLiveHypeMeter() {
         const tickerTrack = document.getElementById('live-hype-track');
         if (!tickerTrack) return;
 
-        const db = window.mockMovies || [];
-        if (db.length === 0) return;
+        let movies = [];
+        try {
+            const upcoming = await window.TMDB_API.getUpcoming();
+            if (upcoming && upcoming.length > 0) {
+                const today = new Date();
+                movies = upcoming.filter(m => {
+                    const title = (m.title || "").toLowerCase();
+                    const isUpcoming = m.release_date && new Date(m.release_date) > today;
+                    const isNotJunk = !title.includes('tour') && !title.includes('concert') && !title.includes('documentary');
+                    return isUpcoming && isNotJunk;
+                });
+            }
+        } catch (e) { console.error("Hype Meter API Fail:", e); }
 
-        // 1. The Daily Shuffle Math
-        const today = new Date().getDate(); // Gets the day of the month (1-31)
-        // Shift the array based on today's date so it changes every 24 hours
-        const shiftedDb = [...db.slice(today % db.length), ...db.slice(0, today % db.length)];
-        const displayMovies = shiftedDb.slice(0, 10); // Grab exactly 10 movies
+        // HARD FALLBACK: Only trigger if TMDB is completely empty or unreachable
+        if (movies.length === 0) {
+            console.log("TMDB Hype Data empty, using mock fallback.");
+            const db = window.mockMovies || [];
+            const safeMock = [
+                { title: "Spider-Man: Brand New Day", release_date: "2026-07-31", popularity: 99, poster: "https://legadodamarvel.com.br/en/wp-content/uploads/2026/04/Spider-Man-Brand-New-Day-poster-legadodamarvel-819x1024.webp", studio: "Sony / Marvel" },
+                { title: "Avengers: Doomsday", release_date: "2026-05-01", popularity: 98, poster: "https://www.movieposters.com/cdn/shop/files/avengers-doomsday_2lkvs30c.jpg?v=1768329841&width=1680", studio: "Marvel Studios" },
+                { title: "Dune: Part Three", release_date: "2026-12-18", popularity: 97, poster: "https://cdn.cinematerial.com/p/297x/bw5f0vwv/dune-part-three-movie-poster-md.jpg?v=1775526461", studio: "Warner Bros." },
+                { title: "The Batman Part II", release_date: "2026-10-02", popularity: 96, poster: "https://www.movieposters.com/cdn/shop/products/the-batman_hyktligc.jpg?v=1762969722&width=1680", studio: "DC Studios" }
+            ];
+            movies = [...db, ...safeMock];
+        }
+
+        // Randomize rotation for fresh visuals on reload
+        const randomized = movies.sort(() => 0.5 - Math.random());
+        const displayMovies = randomized.slice(0, 10);
 
         let tickerHTML = '';
-
-        // 2. Generate the UI
         displayMovies.forEach(movie => {
-            // Generate stable, realistic stats based on the movie's title length
-            const hypeVal = 65 + (movie.title.length % 33); // Range: 65% to 97%
+            const displayTitle = movie.title.length > 25 ? movie.title.substring(0, 22) + '...' : movie.title;
+            const hypeVal = 75 + (movie.title.length % 23); 
+            let trendClass = hypeVal > 85 ? 'neon-green' : (hypeVal > 80 ? 'neon-orange' : 'neon-red');
+            let trendIcon = hypeVal > 85 ? 'fa-arrow-trend-up' : (hypeVal > 80 ? 'fa-minus' : 'fa-arrow-trend-down');
+            let sign = hypeVal > 85 ? '+' : (hypeVal > 80 ? '' : '-');
 
-            let trendClass = 'neon-green';
-            let trendIcon = 'fa-arrow-trend-up';
-            let sign = '+';
-
-            if (hypeVal < 75) {
-                trendClass = 'neon-red';
-                trendIcon = 'fa-arrow-trend-down';
-                sign = '-';
-            } else if (hypeVal < 85) {
-                trendClass = 'neon-orange';
-                trendIcon = 'fa-minus';
-                sign = '';
-            }
-
-            const imgUrl = movie.poster || 'https://placehold.co/32x48/111/FFF?text=Film';
+            const imgUrl = movie.poster_path ? `${window.TMDB_API.IMG_URL}${movie.poster_path}` : (movie.poster || 'https://placehold.co/50x50/111/FFF?text=Film');
 
             tickerHTML += `
                 <div class="ticker-item">
                     <img src="${imgUrl}" style="width: 50px; height: 50px; border-radius: 6px; object-fit: cover; box-shadow: 0 2px 5px rgba(0,0,0,0.5);">
-                    <span>${movie.title}</span>
+                    <span>${displayTitle}</span>
                     <span class="hype-tag ${trendClass}"><i class="fa-solid ${trendIcon}"></i> ${sign}${hypeVal}%</span>
                 </div>
             `;
         });
 
-        // 3. The Seamless Loop Hack
-        // We inject the 10 movies TWICE. Because your CSS animates to translateX(-50%), 
-        // it slides exactly 10 movies over, then instantly resets, creating a flawless infinite loop!
         tickerTrack.innerHTML = tickerHTML + tickerHTML;
     }
 
@@ -691,7 +955,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function updateAuthState() {
         const isLoggedIn = localStorage.getItem('cinescore_auth') === 'true';
-        // THE FIX: Simulated Pro Status (Change to 'true' in console to test)
         const isPro = localStorage.getItem('cinescore_pro') === 'true';
 
         const authButtons = document.getElementById('auth-buttons');
@@ -707,26 +970,21 @@ document.addEventListener("DOMContentLoaded", () => {
             if (userMenu) userMenu.style.display = 'flex';
             if (drawerToggleBtn) drawerToggleBtn.style.display = 'flex';
 
-            // --- PRO USER UI LOGIC ---
             if (isPro) {
                 if (upgradeBtn) {
                     upgradeBtn.innerHTML = '<i class="fa-solid fa-star"></i> Pro User';
                     upgradeBtn.style.background = 'rgba(255, 159, 28, 0.1)';
                     upgradeBtn.style.color = 'var(--color-warning)';
                     upgradeBtn.style.border = '1px solid rgba(255, 159, 28, 0.3)';
-                    upgradeBtn.onclick = null; // Remove paywall popup
+                    upgradeBtn.onclick = null;
                     upgradeBtn.style.cursor = 'default';
                 }
                 if (userAvatar) userAvatar.classList.add('pro-avatar-glow');
                 if (hoverProBadge) hoverProBadge.style.display = 'block';
             } else {
                 if (upgradeBtn) {
-                    // Sleek Google-style Upgrade button
                     upgradeBtn.innerHTML = '<i class="fa-solid fa-bolt"></i> Upgrade';
                     upgradeBtn.className = 'small nav-button-primary';
-                    upgradeBtn.style.background = '';
-                    upgradeBtn.style.color = '';
-                    upgradeBtn.style.border = '';
                     upgradeBtn.onclick = triggerPaywallExplanation;
                     upgradeBtn.style.cursor = 'pointer';
                 }
@@ -753,19 +1011,38 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (acctHandleInput) acctHandleInput.value = savedHandle.replace('@', '');
             }
         } else {
-            // --- LOGGED OUT STATE ---
             if (authButtons) authButtons.style.display = 'flex';
             if (userMenu) userMenu.style.display = 'none';
-            if (drawerToggleBtn) drawerToggleBtn.style.display = 'none';
+            
+            // PHASE 1.6: Responsive Toggle Logic
+            if (drawerToggleBtn) {
+                if (window.innerWidth <= 768) {
+                    drawerToggleBtn.style.display = 'flex'; // Always show on mobile
+                } else {
+                    drawerToggleBtn.style.display = 'none'; // Hide on desktop if logged out
+                }
+            }
 
-            // Security Redirect
             if (window.location.pathname.toLowerCase().includes('hub.html')) {
                 window.location.href = 'index.html';
             }
         }
+
+        // PHASE 1.6: TEASER GATING - Links stay visible, but are intercepted
+        document.querySelectorAll('.restricted-hub-link').forEach(link => {
+            link.onclick = (e) => {
+                if (localStorage.getItem('cinescore_auth') !== 'true') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const modal = document.getElementById('signupModal');
+                    if (modal) modal.style.display = 'flex';
+                    return false;
+                }
+            };
+        });
     }
 
-    updateAuthState(); // Initialize on load
+    updateAuthState();
 
     // ==========================================
     // BULLETPROOF AVATAR HOVER & CLICK ENGINE
@@ -1096,137 +1373,40 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }, 50);
         }
-    });
+});
 
-    /* --------------------------------------------------------
-       2. UNIVERSAL SEARCH ENGINE (Bulletproof)
-       -------------------------------------------------------- */
-    const executePredictionBridge = (movieName) => {
+/* --------------------------------------------------------
+   2. UNIVERSAL SEARCH ENGINE (Bulletproof)
+   -------------------------------------------------------- */
+const executePredictionBridge = (movieName) => {
         if (!movieName) return;
 
+        // THE FIX: Check for TMDB metadata in localStorage first (from search dropdown)
+        const activeData = JSON.parse(localStorage.getItem('cinescore_active_movie_data'));
         const db = window.mockMovies || [];
         const match = db.find(m => m.title.toLowerCase().includes(movieName.toLowerCase()));
 
-        if (match) {
-            // Save their requested movie
-            localStorage.setItem('cinescore_active_movie_data', JSON.stringify(match));
-
-            // THE FIX: Tell the session storage a search is active!
-            sessionStorage.setItem('cineScore_activePrediction', match.title);
-
+        if (activeData && activeData.title.toLowerCase() === movieName.toLowerCase()) {
+            sessionStorage.setItem('cineScore_activePrediction', activeData.title);
             const splashLoader = document.getElementById('splash-loader');
             if (splashLoader) splashLoader.style.display = 'flex';
-
-            // Redirect to Prediction page (where Auth state will dictate what they actually see)
+            setTimeout(() => { window.location.href = 'Prediction.html'; }, 2000);
+        } else if (match) {
+            localStorage.setItem('cinescore_active_movie_data', JSON.stringify(match));
+            sessionStorage.setItem('cineScore_activePrediction', match.title);
+            const splashLoader = document.getElementById('splash-loader');
+        if (splashLoader) splashLoader.style.display = 'flex';
             setTimeout(() => { window.location.href = 'Prediction.html'; }, 2000);
         } else {
-            showCustomAlert('error', 'Movie Not Found', "We couldn't find that movie in our database. Try searching for 'Spider-man', 'Avengers', or 'Batman'.");
+            showCustomAlert('error', 'Movie Not Found', "We couldn't find that movie in our database. Try selecting from the dropdown matches.");
         }
     };
 
-    // --- HOME PAGE SEARCH ---
-    const heroInput = document.getElementById('hero-search');
-    const heroBtn = document.getElementById('hero-predict-btn');
-    const heroClearBtn = document.getElementById('hero-search-clear');
 
-    if (heroInput && heroBtn) {
-        // Dynamically create the dropdown if it is missing from the HTML
-        let heroDropdown = document.getElementById('search-dropdown');
-        if (!heroDropdown) {
-            heroDropdown = document.createElement('ul');
-            heroDropdown.id = 'search-dropdown';
-            heroDropdown.className = 'search-dropdown-menu';
+    // initHeroSearch inlined directly in DOMContentLoaded above (scope-safe fix)
 
-            // Ensure the input's parent wrapper can anchor the floating dropdown
-            heroInput.parentElement.style.position = 'relative';
-            heroInput.parentElement.appendChild(heroDropdown);
-        }
 
-        heroInput.addEventListener('input', (e) => {
-            const query = e.target.value.toLowerCase().trim();
-            const db = window.mockMovies || [];
-            heroDropdown.innerHTML = '';
-
-            // NEW: Show 'X' if there is text, hide if empty
-            if (heroClearBtn) {
-                heroClearBtn.style.display = query.length > 0 ? 'block' : 'none';
-            }
-
-            // NEW: Clear Button Click Action
-            if (heroClearBtn) {
-                heroClearBtn.addEventListener('click', () => {
-                    heroInput.value = '';
-                    heroClearBtn.style.display = 'none';
-                    heroDropdown.style.display = 'none';
-                    heroInput.focus(); // Keeps the cursor active in the search bar
-                });
-            }
-
-            if (query.length === 0) {
-                heroDropdown.style.display = 'none';
-                return;
-            }
-
-            const filtered = db.filter(m => m.title.toLowerCase().includes(query));
-
-            if (filtered.length > 0) {
-                heroDropdown.style.display = 'block';
-                filtered.forEach(movie => {
-                    const li = document.createElement('li');
-                    li.className = 'search-item';
-                    // Ensure the <li> itself acts as a flex container
-                    li.style.display = 'flex';
-                    li.style.alignItems = 'center';
-
-                    li.innerHTML = `
-                          <div style="display: flex; align-items: center; gap: 12px; flex: 1; overflow: hidden;">
-                            <img src="${movie.poster}" class="search-poster" alt="poster" style="flex-shrink: 0; width: 36px; height: 54px; object-fit: cover; border-radius: 4px;">
-        
-                          <div class="search-info" style="min-width: 0; flex: 1;">
-                           <h4 class="search-title" style="margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${movie.title}</h4>
-                            <p class="search-meta" style="margin: 0; font-size: 11px; color: var(--color-secondary);">${movie.year} • ${movie.studio}</p>
-                        </div>
-                         </div>
-
-                       <i class="fa-solid fa-magnifying-glass-arrow-right search-right-icon" style="margin-left: auto; flex-shrink: 0;"></i>
-                            `;
-
-                    li.addEventListener('click', () => {
-                        heroInput.value = movie.title;
-                        heroDropdown.style.display = 'none';
-                        executePredictionBridge(movie.title);
-                    });
-                    heroDropdown.appendChild(li);
-                });
-            } else {
-                heroDropdown.style.display = 'block';
-                heroDropdown.innerHTML = '<li style="padding: 16px; text-align: center; color: var(--color-tertiary); cursor: default; font-size: 14px;">Movie not found in database.</li>';
-            }
-        });
-
-        attachKeyboardNav(heroInput, heroDropdown);
-
-        // Hide dropdown if user clicks anywhere else on the screen
-        document.addEventListener('click', (e) => {
-            if (!heroInput.contains(e.target) && !heroDropdown.contains(e.target)) {
-                heroDropdown.style.display = 'none';
-            }
-        });
-
-        heroBtn.addEventListener('click', () => {
-            if (typeof window.executePredictionBridge === 'function') {
-                window.executePredictionBridge(heroInput.value.trim());
-            }
-        });
-
-        heroInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
-                if (typeof window.executePredictionBridge === 'function') {
-                    window.executePredictionBridge(heroInput.value.trim());
-                }
-            }
-        });
-    }
+    // Duplicate initDefaultSearch removed
 
     // --- HOME PAGE: FEATURED CARDS CLICK WIRING ---
     const featuredCards = document.querySelectorAll('.featured-movie-card');
@@ -1334,8 +1514,10 @@ document.addEventListener("DOMContentLoaded", () => {
             // ----------------------------------------------------
             const hashEl = document.getElementById('prediction-hash');
             if (hashEl) {
-                const randomHex = Math.random().toString(16).substring(2, 6).toUpperCase();
-                hashEl.textContent = `#CS-${randomHex}`;
+                // Use real TMDB ID if available, else random hex
+                const tmdbId = activeMovie.id || (window._lastApiResult && window._lastApiResult.pitch_summary?.tmdb_id);
+                const idDisplay = tmdbId ? String(tmdbId).padStart(6, '0') : Math.random().toString(16).substring(2, 6).toUpperCase();
+                hashEl.textContent = `#CS-${idDisplay}`;
             }
 
             // ----------------------------------------------------
@@ -1380,14 +1562,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
             if (isLoggedIn) {
                 // REAL DATA (LOGGED IN)
-                if (verdictEl) verdictEl.textContent = activeMovie.verdict || 'Pending';
+                const aiScore = parseInt(activeMovie.aiScore) || 75;
+                let dynamicVerdict = activeMovie.verdict || 'Pending';
+                
+                // THE FIX: Generate dynamic verdict if it's "Pending" or missing
+                if (!activeMovie.verdict || activeMovie.verdict === 'Pending') {
+                    if (aiScore >= 90) dynamicVerdict = 'Billion Dollar Club';
+                    else if (aiScore >= 80) dynamicVerdict = 'Projected Mega-Hit';
+                    else if (aiScore >= 70) dynamicVerdict = 'Strong Performer';
+                    else if (aiScore >= 55) dynamicVerdict = 'Safe Bet';
+                    else dynamicVerdict = 'Mixed Outlook';
+                }
 
+                if (verdictEl) verdictEl.textContent = dynamicVerdict;
                 if (boxOfficeEl) boxOfficeEl.innerHTML = `${safeBoxOffice.replace(/[MB]/g, '')}<span style="font-size: 24px;">${safeBoxOffice === 'N/A' ? '' : safeBoxOffice.slice(-1)}</span>`;
-
                 if (imdbEl) imdbEl.innerHTML = `${safeImdb}<span style="font-size: 24px; color: var(--color-secondary);">${safeImdb === 'N/A' ? '' : '/10'}</span>`;
-
                 if (profitTargetEl) profitTargetEl.innerHTML = `${profitTargetStr.replace(/[MB]/g, '')}<span style="font-size: 24px;">${profitTargetStr.slice(-1)}</span>`;
-
                 if (estBudgetEl) estBudgetEl.textContent = `Est. Budget: ${estBudgetStr}`;
 
             } else {
@@ -1421,7 +1611,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // AI Gauge Setup
             const gaugeFill = document.querySelector('.ai-gauge-fill');
-            if (gaugeFill) gaugeFill.style.strokeDashoffset = 264 - (264 * (activeMovie.aiScore / 100));
+            const scoreVal = parseInt(activeMovie.aiScore) || 75;
+            if (gaugeFill) gaugeFill.style.strokeDashoffset = 264 - (264 * (scoreVal / 100));
+
+            // Dynamic Confidence Label
+            const confidenceLabel = document.getElementById('dyn-ai-confidence-label');
+            if (confidenceLabel) {
+                if (scoreVal >= 95) confidenceLabel.textContent = 'Extreme Hype';
+                else if (scoreVal >= 88) confidenceLabel.textContent = 'High Confidence';
+                else if (scoreVal >= 78) confidenceLabel.textContent = 'Strong Prediction';
+                else if (scoreVal >= 60) confidenceLabel.textContent = 'Moderate Outlook';
+                else if (scoreVal >= 45) confidenceLabel.textContent = 'Uncertain Market';
+                else confidenceLabel.textContent = 'High Risk Asset';
+            }
 
             // Chart Render
             if (typeof window.renderDynamicCharts === 'function') window.renderDynamicCharts(activeMovie, 'base');
@@ -1482,12 +1684,16 @@ if (typeof Chart !== 'undefined') {
 window.cineCharts = {};
 
 window.renderDynamicCharts = function (movieData, scenario = 'base') {
+    if (!movieData) return;
 
-    // THE FIX: Defensive Programming. If chart data is missing, exit gracefully instead of crashing!
-    if (!movieData || !movieData.sentimentLine || !movieData.sonar || !movieData.funnel || !movieData.trajectory) {
-        console.warn("Chart data missing for:", movieData?.title);
-        return;
-    }
+    // THE GHOST ENGINE: Provide high-fidelity defaults if API results are sparse
+    const data = {
+        sentimentLine: movieData.sentimentLine || { pos: [65, 75, 82, 88, 92], neg: [12, 10, 8, 6, 5] },
+        sonar: movieData.sonar || [85, 70, 90, 75, 80],
+        funnel: movieData.funnel || [100, 85, 120, 450],
+        trajectory: movieData.trajectory || [25, 45, 65, 80, 90, 95],
+        social: movieData.social || [35, 25, 15, 15, 10]
+    };
 
     const isDarkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
     const gridColor = isDarkTheme ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)";
@@ -1497,17 +1703,24 @@ window.renderDynamicCharts = function (movieData, scenario = 'base') {
     if (scenario === 'bull') mult = 1.25;
     if (scenario === 'bear') mult = 0.75;
 
-    const sPos = movieData.sentimentLine.pos.map(v => Math.min(100, v * mult));
+    // --- THE JITTER ENGINE (High-Fidelity Dynamic Feel) ---
+    // If we're using Ghost Data (fallbacks), we add a seed-based jitter 
+    // so different movies show slightly different "Live" trends.
+    const titleSeed = (movieData.title || "CineScore").split('').reduce((a, b) => a + b.charCodeAt(0), 0);
+    const jitter = (val, range = 5) => val + (titleSeed % range) - (range / 2);
 
-    const sNeg = movieData.sentimentLine.neg.map(v => Math.min(100, v * (scenario === 'bear' ? 1.5 : 1)));
+    const sPos = (data.sentimentLine.pos || []).map(v => Math.min(100, jitter(v * mult)));
+    const sNeg = (data.sentimentLine.neg || []).map(v => Math.min(100, jitter(v * (scenario === 'bear' ? 1.5 : 1))));
+    const sSonar = (data.sonar || []).map(v => Math.min(100, jitter(v * mult, 10)));
 
-    const sSonar = movieData.sonar.map(v => Math.min(100, v * mult));
-
-    const sFunnel = [...movieData.funnel];
-
-    sFunnel[3] = Math.round(sFunnel[3] * mult);
-
-    const sTraj = movieData.trajectory.map(v => Math.round(v * mult));
+    // --- CURRENCY NORMALIZATION FIX ---
+    // Standardize everything to RAW DOLLARS to fix the "0M" Y-axis bug.
+    // Mock data often uses [150, 400] (millions), API uses [150000000, 400000000] (raw).
+    const normalizeMoney = (val) => (val < 10000) ? val * 1_000_000 : val;
+    
+    const sFunnel = data.funnel.map(v => Math.round(normalizeMoney(v) * (v === data.funnel[3] ? mult : 1)));
+    const sTraj = data.trajectory.map(v => Math.round(normalizeMoney(v) * mult));
+    const socialData = [...data.social];
 
 
     Object.keys(window.cineCharts).forEach(key => { if (window.cineCharts[key]) window.cineCharts[key].destroy(); });
@@ -1515,7 +1728,7 @@ window.renderDynamicCharts = function (movieData, scenario = 'base') {
     const ctxSocial = document.getElementById("socialDonut");
     if (ctxSocial) {
         // Safely pad the data in case your mock data only has 4 items instead of 5
-        const socialData = [...movieData.social];
+        const socialData = [...data.social];
         if (socialData.length === 4) socialData.push(12); // Fallback for IG
 
         window.cineCharts.social = new Chart(ctxSocial, {
@@ -1609,7 +1822,27 @@ window.renderDynamicCharts = function (movieData, scenario = 'base') {
             }]
         },
         options: {
-            responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { grid: { color: gridColor, borderDash: [5, 5] }, ticks: { callback: v => '$' + v + 'M' } }, x: { grid: { display: false } } }
+            responsive: true, 
+            maintainAspectRatio: false, 
+            plugins: { 
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return '$' + (context.raw / 1_000_000).toFixed(0) + 'M';
+                        }
+                    }
+                }
+            }, 
+            scales: { 
+                y: { 
+                    grid: { color: gridColor, borderDash: [5, 5] }, 
+                    ticks: { 
+                        callback: v => '$' + (v / 1_000_000).toFixed(0) + 'M' 
+                    } 
+                }, 
+                x: { grid: { display: false } } 
+            } 
         }
     });
 
@@ -1637,7 +1870,19 @@ window.renderDynamicCharts = function (movieData, scenario = 'base') {
                 }]
             },
             options: {
-                responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { grid: { color: gridColor, borderDash: [5, 5] }, ticks: { callback: v => '$' + v + 'M' }, beginAtZero: true } }, interaction: { intersect: false, mode: 'index' }
+                responsive: true, maintainAspectRatio: false, 
+                plugins: { legend: { display: false } }, 
+                scales: { 
+                    x: { grid: { display: false } }, 
+                    y: { 
+                        grid: { color: gridColor, borderDash: [5, 5] }, 
+                        ticks: { 
+                            callback: v => '$' + (v / 1_000_000).toFixed(0) + 'M' 
+                        }, 
+                        beginAtZero: true 
+                    } 
+                }, 
+                interaction: { intersect: false, mode: 'index' }
             }
         });
     }
@@ -1647,71 +1892,107 @@ window.renderDynamicCharts = function (movieData, scenario = 'base') {
     // ==========================================
     const compsCtx = document.getElementById('compsChart');
     if (compsCtx) {
-        // Generate 3 random comparable movies from the database
-        const db = window.mockMovies || [];
-        const availableComps = db.filter(m => m.title !== movieData.title);
-        // Shuffle and pick 3
-        const selectedComps = availableComps.sort(() => 0.5 - Math.random()).slice(0, 3);
+        // --- THE TMDB COMPS FIX ---
+        async function fetchTMDBComps() {
+            // THE ROBUST GENRE DETECTION: Look everywhere for the genre name
+            const primaryGenreName = 
+                (movieData.primary_genre) || 
+                (movieData.pitch_summary?.primary_genre) || 
+                (movieData.pitch_summary?.genre) || 
+                (movieData.genres && movieData.genres.length > 0 ? (Array.isArray(movieData.genres) ? movieData.genres[0] : movieData.genres) : 'Action');
+            
+            const genreId = Object.keys(GENRE_MAP).find(key => GENRE_MAP[key].toLowerCase() === primaryGenreName.toLowerCase());
+            
+            let comps = [];
+            if (genreId) {
+                const results = await window.TMDB_API.discoverReleased(genreId);
+                if (results && results.length > 0) {
+                    // Filter out current movie and sort by revenue (Total Run)
+                    comps = results
+                        .filter(m => m.title !== movieData.title && (m.revenue > 10_000_000 || m.popularity > 40))
+                        .sort((a, b) => (b.revenue || b.popularity * 1_000_000) - (a.revenue || a.popularity * 1_000_000))
+                        .slice(0, 3)
+                        .map(m => ({
+                            title: m.title,
+                            value: m.revenue ? Math.round(m.revenue / 1_000_000) : Math.round(m.popularity * 2.5)
+                        }));
+                }
+            }
 
-        // Build the dynamic labels and data
-        const labels = [`${movieData.title} (Predicted)`];
-        const data = [sTraj[0] || 145.5]; // Uses predicted Opening Weekend
+            // SMART FALLBACK: If discovery is sparse, use genre-specific bangers
+            if (comps.length < 3) {
+                const genreName = primaryGenreName; 
+                const genreFallbacks = {
+                    "Action": [{title: "Maverick", value: 1490}, {title: "John Wick 4", value: 440}, {title: "Fury Road", value: 380}],
+                    "Horror": [{title: "It", value: 701}, {title: "World War Z", value: 540}, {title: "Smile", value: 217}],
+                    "Superhero": [{title: "Endgame", value: 2797}, {title: "The Batman", value: 770}, {title: "Deadpool 3", value: 1330}],
+                    "Sci-Fi": [{title: "Dune 2", value: 711}, {title: "Interstellar", value: 701}, {title: "Avatar", value: 2923}],
+                    "Drama": [{title: "Oppenheimer", value: 975}, {title: "Titanic", value: 2264}, {title: "The Whale", value: 55}]
+                };
+                comps = genreFallbacks[genreName] || genreFallbacks["Action"];
+            }
 
-        selectedComps.forEach(comp => {
-            labels.push(comp.title);
-            data.push(60 + (comp.title.length * 4)); // Mock Opening Weekend
-        });
+            const movieTitle = (movieData.title || movieData.pitch_summary?.title || 'This Film');
+            
+            // ROBUST REVENUE PARSING: Handle raw numbers and formatted strings (like $1.3B)
+            let rawProj = 145500000;
+            if (movieData.financial_forecast?.projected_revenue) {
+                rawProj = movieData.financial_forecast.projected_revenue;
+            } else if (movieData.boxOffice) {
+                const cleanStr = movieData.boxOffice.replace(/[^0-9.]/g, '');
+                const num = parseFloat(cleanStr);
+                rawProj = num * (movieData.boxOffice.includes('B') ? 1_000_000_000 : 1_000_000);
+            }
+            const predictedTotal = rawProj / 1_000_000;
+            
+            const labels = [`${movieTitle.substring(0,10)}...`, ...comps.map(c => c.title.substring(0,10))];
+            const data = [predictedTotal, ...comps.map(c => c.value)];
 
-        window.cineCharts.comps = new Chart(compsCtx, {
-            type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [{
-                    label: 'Opening Weekend ($M)',
-                    data: data,
-                    backgroundColor: [
-                        '#0055FF', // Accent Color for Predicted
-                        '#64748B', // Neutral for Comps
-                        '#64748B',
-                        '#64748B'
-                    ],
-                    borderRadius: 6,
-                    borderSkipped: false
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        callbacks: {
-                            label: function (context) { return '$' + context.raw + 'M'; }
-                        }
-                    }
+            if (window.cineCharts.comps) window.cineCharts.comps.destroy();
+            window.cineCharts.comps = new Chart(compsCtx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Total Global Run ($M)',
+                        data: data,
+                        backgroundColor: ['#0055FF', '#64748B', '#64748B', '#64748B'],
+                        borderRadius: 6,
+                        borderSkipped: false
+                    }]
                 },
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        grid: { color: gridColor },
-                        ticks: { color: '#94A3B8' }
-                    },
-                    x: {
-                        grid: { display: false },
-                        ticks: {
-                            color: '#94a3b8',
-                            font: { size: 11 },
-                            callback: function (value) {
-                                let label = this.getLabelForValue(value);
-                                return label.length > 15 ? label.substring(0, 12) + '...' : label;
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function (context) { return '$' + context.raw + 'M'; }
                             }
+                        }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#94A3B8' } },
+                        x: { 
+                            grid: { display: false }, 
+                            ticks: { 
+                                color: '#94A3B8',
+                                font: { size: 10 },
+                                callback: function(value) {
+                                    let label = this.getLabelForValue(value);
+                                    return label.length > 12 ? label.substring(0, 10) + '...' : label;
+                                }
+                            } 
                         }
                     }
                 }
-            }
-        });
+            });
+        }
+        fetchTMDBComps();
     }
 };
+
 
 
 /* --------------------------------------------------------
@@ -2169,33 +2450,38 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     // --- HUB SEARCH ENGINE ---
+    let hubSearchTimeout;
     if (hubSearch && hubSearchDropdown && contentWrapper) {
         hubSearch.addEventListener('input', (e) => {
-            const query = e.target.value.toLowerCase().trim();
-            const db = window.mockMovies || [];
+            const val = e.target.value.trim();
+            const query = val.toLowerCase();
+            clearTimeout(hubSearchTimeout);
 
             const isWatchlist = window.cinescoreCurrentTab === 'watchlist';
             const currentDbKey = isWatchlist ? 'cinescore_watchlist' : 'cinescore_upcoming';
             let savedMovies = JSON.parse(localStorage.getItem(currentDbKey) || '[]');
 
-            hubSearchDropdown.innerHTML = '';
-
             const isLegacy = window.cinescoreCurrentTab === 'legacy';
             const searchSelector = isWatchlist ? '.tabular-row' : (isLegacy ? '#legacy-container .poster-card' : '.movie-grid .poster-card');
             const currentMovieCards = document.querySelectorAll(searchSelector);
 
-            if (query.length === 0) {
+            // INSTANT UI: Handling clear/short state
+            if (val.length === 1) {
+                hubSearchDropdown.innerHTML = '<li style="padding:16px;text-align:center;font-size:12px;opacity:0.6;color:var(--color-secondary);">Type at least 2 characters to search...</li>';
+                hubSearchDropdown.style.display = 'block';
+                return; // THE FIX: Stop here. No filtering, no debouncing.
+            }
+            if (val.length < 1) {
                 hubSearchDropdown.style.display = 'none';
-                hubClearSearchBtn.classList.add('hidden');
+                hubClearSearchBtn.classList.toggle('hidden', val.length === 0);
                 contentWrapper.classList.remove('search-active');
-
                 currentMovieCards.forEach(card => card.style.display = '');
-
                 const noMsg = document.getElementById('hub-no-results');
                 if (noMsg) noMsg.style.display = 'none';
                 return;
             }
 
+            // INSTANT UI: Card filtering
             contentWrapper.classList.add('search-active');
             hubClearSearchBtn.classList.remove('hidden');
             let hasVisibleCards = false;
@@ -2210,187 +2496,185 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             });
 
-            // THE FIX: Legacy Vault Logic - Filter local nominations for the dropdown
-            let currentLegacy = JSON.parse(localStorage.getItem('cinescore_legacy') || '[]');
-            const queryMatches = isLegacy ? currentLegacy.filter(m => m.title.toLowerCase().includes(query)) : db.filter(m => m.title.toLowerCase().includes(query));
-
-            const alreadyLegacy = queryMatches.filter(m => currentLegacy.some(s => s.title.toLowerCase() === m.title.toLowerCase()));
-            const alreadyTracked = queryMatches.filter(m => savedMovies.some(s => s.title.toLowerCase() === m.title.toLowerCase()) && !alreadyLegacy.some(l => l.title === m.title));
-            const unTracked = queryMatches.filter(m => !savedMovies.some(s => s.title.toLowerCase() === m.title.toLowerCase()) && !alreadyLegacy.some(l => l.title === m.title));
-
-            // THE FIX: Render dropdowns dynamically per tab rules
-            if (unTracked.length > 0 || alreadyTracked.length > 0 || alreadyLegacy.length > 0) {
+            // INSTANT UI: Show loader only for LIVE searches (Watchlist/Overview) when length >= 2
+            if (!isLegacy && val.length >= 2) {
+                hubSearchDropdown.innerHTML = '<li style="padding: 16px; text-align: center; color: var(--color-accent); font-size: 13px; opacity: 0.8;"><i class="fa-solid fa-circle-notch fa-spin"></i> Syncing TMDB database...</li>';
                 hubSearchDropdown.style.display = 'block';
+            }
 
-                if (!isLegacy) {
-                    // 1. Render Untracked Movies First
-                    unTracked.forEach(movie => {
-                        const li = document.createElement('li');
+            // LIVE SEARCH: Debounced
+            hubSearchTimeout = setTimeout(async () => {
+                // Skip live fetch for Legacy Tab!
+                let tmdbMatches = isLegacy ? [] : await window.TMDB_API.searchMovies(query);
+                
+                // Prevent Stale Request
+                if (hubSearch.value.trim().toLowerCase() !== query) return;
+
+                hubSearchDropdown.innerHTML = ''; 
+                
+                let mockMatches = isLegacy ? [] : (window.mockMovies || []).filter(m => m.title.toLowerCase().includes(query));
+                
+                // Deduplicate and prepare
+                const clean = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                const seenTitles = new Set();
+                let queryMatches = [];
+
+                // Filter local legacy movies for isLegacy
+                if (isLegacy) {
+                    savedMovies.forEach(m => {
+                        if (m.title.toLowerCase().includes(query)) {
+                            queryMatches.push(m);
+                            seenTitles.add(clean(m.title));
+                        }
+                    });
+                } else {
+                    [...mockMatches, ...(tmdbMatches || [])].forEach(m => {
+                        const cleanT = clean(m.title);
+                        if (!seenTitles.has(cleanT)) {
+                            seenTitles.add(cleanT);
+                            queryMatches.push(m);
+                        }
+                    });
+                }
+
+            let currentLegacy = JSON.parse(localStorage.getItem('cinescore_legacy') || '[]');
+            const today = new Date('2026-03-29'); // Simulated system date
+            if (queryMatches.length > 0) {
+                hubSearchDropdown.style.display = 'block';
+                hubSearchDropdown.innerHTML = ''; 
+
+                queryMatches.forEach(movie => {
+                    const cleanT = clean(movie.title);
+                    const isLegacyItem = currentLegacy.some(s => clean(s.title) === cleanT);
+                    const isTracked = savedMovies.some(s => clean(s.title) === cleanT);
+
+                    const li = document.createElement('li');
                     li.className = 'search-item row-between';
 
-                    // THE FIX: Check if the movie is already released
-                    const today = new Date('2026-03-29');
-                    const yearStr = String(movie.year || '2026');
-                    let releaseDate = new Date(yearStr);
-                    if (yearStr.length <= 4) releaseDate = new Date(`${yearStr}-12-31`);
-
-                    const isReleased = releaseDate <= today;
-                    const isOverview = window.cinescoreCurrentTab === 'overview';
-
-                    if (isOverview && isReleased) {
-                        // RENDER AS LOCKED (Can't predict past releases!)
-                        li.innerHTML = `
-                            <div class="row" style="gap: 12px; align-items: center; opacity: 0.6; filter: grayscale(1);">
-                                <img src="${movie.poster}" style="width: 30px; height: 45px; border-radius: 4px; object-fit: cover;">
-                                <div class="search-info">
-                                    <h4 class="search-title" style="margin: 0; font-size: 14px;">${movie.title}</h4>
-                                    <p class="search-meta" style="margin: 0; font-size: 11px; color: var(--color-danger);">Already Released • Cannot Predict</p>
-                                </div>
-                            </div>
-                            <i class="fa-solid fa-lock" style="color: var(--color-danger); margin-right: 8px; opacity: 0.6;"></i>
-                        `;
-                        li.addEventListener('click', (ev) => {
-                            ev.stopPropagation();
-                            if (typeof window.showCustomAlert === 'function') {
-                                window.showCustomAlert('error', 'Predictions Closed', 'This movie has already been released. You cannot add it to your active tracker.');
-                            } else {
-                                alert('Predictions Closed. This movie has already been released.');
-                            }
-                        });
-                    } else {
-                        // RENDER NORMALLY (Add to Tracker / Watchlist)
-                        const actionText = isOverview ? 'Add to Tracker' : 'Add to Watchlist';
+                    if (isLegacyItem) {
+                        li.style.backgroundColor = 'rgba(139, 92, 246, 0.05)';
                         li.innerHTML = `
                             <div class="row" style="gap: 12px; align-items: center;">
-                                <img src="${movie.poster}" style="width: 30px; height: 45px; border-radius: 4px; object-fit: cover;">
+                                <img src="${movie.poster_path ? window.TMDB_API.IMG_URL + movie.poster_path : (movie.poster || 'https://placehold.co/30x45/111/FFF?text=Film')}" style="width: 30px; height: 45px; border-radius: 4px; object-fit: cover;">
                                 <div class="search-info">
-                                    <h4 class="search-title" style="margin: 0; font-size: 14px;">${movie.title}</h4>
-                                    <p class="search-meta" style="margin: 0; font-size: 11px;">${movie.year} • ${actionText}</p>
+                                    <h4 class="search-title" style="margin: 0; font-size: 14px; color: var(--color-alt);">${movie.title}</h4>
+                                    <p class="search-meta" style="margin: 0; font-size: 11px; color: var(--color-alt);">Hall of Fame • Released</p>
                                 </div>
                             </div>
-                            <button class="add-draft-btn" style="background: var(--color-accent); color: white; border: none; border-radius: 50%; width: 28px; height: 28px; padding: 0 !important; display: flex; align-items: center; justify-content: center; flex-shrink: 0; cursor: pointer;"><i class="fa-solid fa-plus"></i></button>
+                            <i class="fa-solid fa-award" style="color: var(--color-alt); margin-right: 8px; font-size: 18px;"></i>
                         `;
-
                         li.addEventListener('click', (ev) => {
                             ev.stopPropagation();
-                            if (isOverview) {
-                                let currentSaved = JSON.parse(localStorage.getItem('cinescore_upcoming') || '[]');
-                                if (currentSaved.length >= 6) {
-                                    if (typeof window.showCustomAlert === 'function') window.showCustomAlert('premium', 'Upgrade to CineScore Pro', 'You have reached the maximum of <b>6 tracking slots</b> on the free tier.');
-                                    return;
-                                }
-
-                                // THE FIX: Removed Test Bypass! Back to pure blank draft state.
-                                currentSaved.unshift({ ...movie, userPrediction: null, userConfidence: null, isPinned: false, isLocked: false });
-                                localStorage.setItem('cinescore_upcoming', JSON.stringify(currentSaved));
-                                if (typeof window.loadSavedMovies === 'function') window.loadSavedMovies();
-                            } else {
-                                let currentWatchlist = JSON.parse(localStorage.getItem('cinescore_watchlist') || '[]');
-                                if (!currentWatchlist.some(m => m.title === movie.title)) {
-                                    currentWatchlist.unshift({ ...movie, userPrediction: null, userConfidence: null, isPinned: false, isLocked: false });
-                                    localStorage.setItem('cinescore_watchlist', JSON.stringify(currentWatchlist));
-                                }
-                                if (typeof window.renderTabularWatchlist === 'function') window.renderTabularWatchlist();
-                            }
-
-                            if (typeof window.calculateHubMacros === 'function') window.calculateHubMacros();
-
                             hubSearch.value = '';
                             hubSearch.dispatchEvent(new Event('input'));
+                            if (typeof window.switchHubTab === 'function') window.switchHubTab('legacy');
                         });
+                    } else if (isTracked) {
+                        const trackedMovie = savedMovies.find(s => clean(s.title) === cleanT) || movie;
+                        li.style.backgroundColor = 'rgba(0, 200, 83, 0.05)';
+                        li.innerHTML = `
+                            <div class="row" style="gap: 12px; align-items: center;">
+                                <img src="${trackedMovie.poster || (movie.poster_path ? window.TMDB_API.IMG_URL + movie.poster_path : 'https://placehold.co/30x45/111/FFF?text=Film')}" style="width: 30px; height: 45px; border-radius: 4px; object-fit: cover;">
+                                <div class="search-info">
+                                    <h4 class="search-title" style="margin: 0; font-size: 14px; color: var(--color-success);">${movie.title}</h4>
+                                    <p class="search-meta" style="margin: 0; font-size: 11px; color: var(--color-success);">Already Tracking • Click to View</p>
+                                </div>
+                            </div>
+                            <i class="fa-solid fa-location-pin-lock" style="color: var(--color-success); margin-right: 8px; font-size: 18px;"></i>
+                        `;
+                        li.addEventListener('click', (ev) => {
+                            ev.stopPropagation();
+                            hubSearch.value = '';
+                            hubSearch.dispatchEvent(new Event('input'));
+                            hubSearchDropdown.style.display = 'none';
+                            const activeSelector = (window.cinescoreCurrentTab === 'watchlist') ? '.tabular-row' : '.movie-grid .poster-card';
+                            const cards = document.querySelectorAll(activeSelector);
+                            cards.forEach(card => {
+                                const t = card.querySelector('.movie-title') || card.querySelector('.tabular-title');
+                                if (t && clean(t.textContent) === cleanT) {
+                                    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    card.style.outline = '2px solid var(--color-success)';
+                                    setTimeout(() => card.style.outline = 'none', 2000);
+                                }
+                            });
+                        });
+                    } else {
+                        const yearStr = String(movie.year || (movie.release_date ? movie.release_date.split('-')[0] : '2026'));
+                        let releaseDate = movie.release_date ? new Date(movie.release_date) : new Date(`${yearStr}-12-31`);
+                        const isReleased = releaseDate <= today;
+                        const isOverview = window.cinescoreCurrentTab === 'overview';
+
+                        if (isOverview && isReleased) {
+                            li.style.opacity = '0.7';
+                            li.innerHTML = `
+                                <div class="row" style="gap: 12px; align-items: center; filter: grayscale(1);">
+                                    <img src="${movie.poster_path ? window.TMDB_API.IMG_URL + movie.poster_path : (movie.poster || 'https://placehold.co/30x45/111/FFF?text=Film')}" style="width: 30px; height: 45px; border-radius: 4px; object-fit: cover;">
+                                    <div class="search-info">
+                                        <h4 class="search-title" style="margin: 0; font-size: 14px;">${movie.title}</h4>
+                                        <p class="search-meta" style="margin: 0; font-size: 11px; color: var(--color-danger);">Already Released • Cannot Predict</p>
+                                    </div>
+                                </div>
+                                <i class="fa-solid fa-lock" style="color: var(--color-danger); margin-right: 8px; opacity: 0.6;"></i>
+                            `;
+                            li.addEventListener('click', (ev) => {
+                                ev.stopPropagation();
+                                if (typeof window.showCustomAlert === 'function') window.showCustomAlert('error', 'Predictions Closed', 'This movie has already been released.');
+                            });
+                        } else {
+                            const actionText = isOverview ? 'Add to Tracker' : 'Add to Watchlist';
+                            const imgUrl = movie.poster_path ? `${window.TMDB_API.IMG_URL}${movie.poster_path}` : (movie.poster || 'https://placehold.co/30x45/111/FFF?text=Film');
+                            const releaseYear = movie.release_date ? movie.release_date.split('-')[0] : (movie.year || 'TBA');
+                            const genresArr = movie.genre_ids ? movie.genre_ids.map(id => GENRE_MAP[id]).filter(Boolean) : (Array.isArray(movie.genres) ? movie.genres : (movie.genres ? movie.genres.split(/[\/,]/) : []));
+                            const genresStr = genresArr.length > 0 ? genresArr.slice(0,2).join(' / ') : 'Cinema';
+
+                            li.innerHTML = `
+                                <div class="row" style="gap: 12px; align-items: center;">
+                                    <img src="${imgUrl}" style="width: 30px; height: 45px; border-radius: 4px; object-fit: cover;">
+                                    <div class="search-info">
+                                        <h4 class="search-title" style="margin: 0; font-size: 14px;">${movie.title}</h4>
+                                        <p class="search-meta" style="margin: 0; font-size: 11px;">${releaseYear} • ${genresStr} • ${actionText}</p>
+                                    </div>
+                                </div>
+                                <button class="add-draft-btn" style="background: var(--color-accent); color: white; border: none; border-radius: 50%; width: 28px; height: 28px; padding: 0 !important; display: flex; align-items: center; justify-content: center; flex-shrink: 0; cursor: pointer;"><i class="fa-solid fa-plus"></i></button>
+                            `;
+
+                            li.addEventListener('click', (ev) => {
+                                ev.stopPropagation();
+                                const movieData = {
+                                    title: movie.title, poster: imgUrl, year: releaseYear, 
+                                    synopsis: movie.overview || movie.synopsis, id: movie.id, 
+                                    userPrediction: null, userConfidence: null, isPinned: false, isLocked: false
+                                };
+
+                                if (isOverview) {
+                                    let currentSaved = JSON.parse(localStorage.getItem('cinescore_upcoming') || '[]');
+                                    if (currentSaved.length >= 6) {
+                                        if (typeof window.showCustomAlert === 'function') window.showCustomAlert('premium', 'Upgrade to CineScore Pro', 'You have reached the limit.');
+                                        return;
+                                    }
+                                    currentSaved.unshift(movieData);
+                                    localStorage.setItem('cinescore_upcoming', JSON.stringify(currentSaved));
+                                    if (typeof window.loadSavedMovies === 'function') window.loadSavedMovies();
+                                } else {
+                                    let currentWatchlist = JSON.parse(localStorage.getItem('cinescore_watchlist') || '[]');
+                                    if (!currentWatchlist.some(m => clean(m.title) === cleanT)) {
+                                        currentWatchlist.unshift(movieData);
+                                        localStorage.setItem('cinescore_watchlist', JSON.stringify(currentWatchlist));
+                                    }
+                                    if (typeof window.renderTabularWatchlist === 'function') window.renderTabularWatchlist();
+                                }
+                                if (typeof window.calculateHubMacros === 'function') window.calculateHubMacros();
+                                hubSearch.value = '';
+                                hubSearch.dispatchEvent(new Event('input'));
+                            });
+                        }
                     }
                     hubSearchDropdown.appendChild(li);
                 });
-
-                // 2. Render Already Tracked Movies Second
-                alreadyTracked.forEach(movie => {
-                    const li = document.createElement('li');
-                    li.className = 'search-item row-between';
-                    li.style.backgroundColor = 'rgba(0, 200, 83, 0.05)';
-                    li.innerHTML = `
-                        <div class="row" style="gap: 12px; align-items: center;">
-                            <img src="${movie.poster}" style="width: 30px; height: 45px; border-radius: 4px; object-fit: cover;">
-                            <div class="search-info">
-                                <h4 class="search-title" style="margin: 0; font-size: 14px; color: var(--color-success);">${movie.title}</h4>
-                                <p class="search-meta" style="margin: 0; font-size: 11px; color: var(--color-success);">Already Tracking • Click to View</p>
-                            </div>
-                        </div>
-                        <i class="fa-solid fa-location-pin-lock" style="color: var(--color-success); margin-right: 8px; font-size: 18px;"></i>
-                    `;
-
-                    li.addEventListener('click', (ev) => {
-                        ev.stopPropagation();
-                        hubSearch.value = '';
-                        hubSearch.dispatchEvent(new Event('input'));
-                        hubSearchDropdown.style.display = 'none';
-
-                        setTimeout(() => {
-                            const isTabWatchlist = window.cinescoreCurrentTab === 'watchlist';
-                            const activeSelector = isTabWatchlist ? '.tabular-row' : '.movie-grid .poster-card';
-                            const cards = document.querySelectorAll(activeSelector);
-                            let targetCard = Array.from(cards).find(c => c.dataset.title === movie.title);
-
-                            if (targetCard) {
-                                targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                
-                                // THE FIX: Use Spotlight Mechanic for Watchlist/Overview
-                                setTimeout(() => {
-                                    triggerCardSpotlight(targetCard);
-                                }, 600);
-                            }
-                        }, 850);
-                    });
-                    hubSearchDropdown.appendChild(li);
-                });
-                } // End !isLegacy block
-
-                // 3. Render Movies Already in the Vault (Legacy)
-                alreadyLegacy.forEach(movie => {
-                    const li = document.createElement('li');
-                    li.className = 'search-item row-between';
-                    li.style.backgroundColor = 'rgba(255, 159, 28, 0.05)'; // Amber warning tint
-                    li.innerHTML = `
-                        <div class="row" style="gap: 12px; align-items: center;">
-                            <img src="${movie.poster}" style="width: 30px; height: 45px; border-radius: 4px; object-fit: cover;">
-                            <div class="search-info">
-                                <h4 class="search-title" style="margin: 0; font-size: 14px; color: var(--color-warning);">${movie.title}</h4>
-                                <p class="search-meta" style="margin: 0; font-size: 11px; color: var(--color-warning);">Already Predicted • In Nomination</p>
-                            </div>
-                        </div>
-                        <i class="fa-solid fa-trophy" style="color: var(--color-warning); margin-right: 8px; font-size: 18px;"></i>
-                    `;
-
-                    li.addEventListener('click', (ev) => {
-                        ev.stopPropagation();
-                        hubSearch.value = '';
-                        hubSearch.dispatchEvent(new Event('input'));
-                        hubSearchDropdown.style.display = 'none';
-
-                        setTimeout(() => {
-                            const isTabWatchlist = window.cinescoreCurrentTab === 'watchlist';
-                            const isTabLegacy = window.cinescoreCurrentTab === 'legacy';
-                            let activeSelector = isTabWatchlist ? '.tabular-row' : '.movie-grid .poster-card';
-                            if (isTabLegacy) activeSelector = '#legacy-container .poster-card';
-                            
-                            const cards = document.querySelectorAll(activeSelector);
-                            let targetCard = Array.from(cards).find(c => c.dataset.title === movie.title);
-
-                            if (targetCard) {
-                                targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                
-                                // THE FIX: Use Spotlight Mechanic for Legacy
-                                setTimeout(() => {
-                                    triggerCardSpotlight(targetCard);
-                                }, 600);
-                            }
-                        }, 50);
-                    });
-                    hubSearchDropdown.appendChild(li);
-                });
-
             } else {
                 hubSearchDropdown.style.display = 'block';
-                hubSearchDropdown.innerHTML = '<li style="padding: 16px; text-align: center; color: var(--color-tertiary); cursor: default; font-size: 14px;"> Movie not found in database.</li>';
+                const emptyText = isLegacy ? 'Movie not found in nominations.' : 'Movie not found in database.';
+                hubSearchDropdown.innerHTML = `<li style="padding: 16px; text-align: center; color: var(--color-tertiary); cursor: default; font-size: 14px;"> ${emptyText}</li>`;
             }
 
             let noMsg = document.getElementById('hub-no-results');
@@ -2398,13 +2682,17 @@ document.addEventListener("DOMContentLoaded", () => {
                 noMsg = document.createElement('div');
                 noMsg.id = 'hub-no-results';
                 noMsg.style.cssText = 'width: 100%; grid-column: 1 / -1; padding: 60px 20px; text-align: center; color: var(--color-secondary); display: flex; flex-direction: column; align-items: center;';
-                noMsg.innerHTML = '<i class="fa-solid fa-video-slash" style="font-size: 48px; opacity: 0.2; margin-bottom: 16px;"></i><h3 style="margin:0; color: var(--color-primary);">No predictions found</h3><p style="margin-top:8px;">Try adding a new movie from the searchbar above.</p>';
             }
+            
+            const noResTitle = isLegacy ? 'No movies in Nominations' : 'No predictions found';
+            const noResDesc = isLegacy ? 'Try adjusting your search or add more to the vault.' : 'Try adding a new movie from the searchbar above.';
+            noMsg.innerHTML = `<i class="fa-solid fa-video-slash" style="font-size: 48px; opacity: 0.2; margin-bottom: 16px;"></i><h3 style="margin:0; color: var(--color-primary);">${noResTitle}</h3><p style="margin-top:8px;">${noResDesc}</p>`;
 
             const targetContainer = isWatchlist ? document.getElementById('tabular-list-container') : document.querySelector('.movie-grid');
             if (targetContainer) targetContainer.appendChild(noMsg);
 
             noMsg.style.display = (!hasVisibleCards && savedMovies.length > 0) ? 'flex' : 'none';
+            }, 400);
         });
 
         hubClearSearchBtn.addEventListener('click', () => {
@@ -2666,7 +2954,30 @@ document.addEventListener("DOMContentLoaded", () => {
                     if (posterEl) posterEl.src = targetMovieData.poster || '';
 
                     const probEl = document.getElementById('modal-ai-prob');
-                    if (probEl) probEl.innerText = `${80 + (title.length % 15)}%`;
+                    if (probEl) {
+                        probEl.innerText = 'Analyzing...';
+                        // background predict call
+                        const pitchPayload = {
+                            title: title,
+                            tmdb_id: targetMovieData.id || 0,
+                            primary_genre: (targetMovieData.genres && targetMovieData.genres.length > 0) ? targetMovieData.genres[0] : "Action",
+                            primary_studio: targetMovieData.studio || "TBA",
+                            actor_1_name: (targetMovieData.cast && targetMovieData.cast !== 'TBA') ? targetMovieData.cast.split(',')[0].trim() : "TBA",
+                            director_name: targetMovieData.director || "TBA"
+                        };
+                        window.CineAPI.predict(pitchPayload).then(res => {
+                            if (res && res.confidence_score) {
+                                const realScore = Math.round(res.confidence_score);
+                                probEl.innerText = `${realScore}%`;
+                                const gaugeFill = document.querySelector('#addMovieModal .ai-gauge-fill');
+                                if (gaugeFill) gaugeFill.style.strokeDashoffset = 264 - (264 * (realScore / 100));
+                            } else {
+                                probEl.innerText = `${80 + (title.length % 15)}%`; // Fallback
+                            }
+                        }).catch(() => {
+                            probEl.innerText = `${80 + (title.length % 15)}%`; // Fallback
+                        });
+                    }
 
                     const lockBtn = document.getElementById('lock-prediction-btn');
                     if (lockBtn) lockBtn.innerHTML = '<i class="fa-solid fa-check"></i> Save Prediction';
@@ -3014,7 +3325,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // ----------------------------------------------------
         // SHOWDOWN INJECTOR (Always populates Left Side)
         // ----------------------------------------------------
-        injectText('showdown-title', activeMovie.battleTitle || 'Franchise Showdown');
+        injectText('showdown-title-text', activeMovie.battleTitle || 'Showdown Arena');
         injectText('showdown-name-1', activeMovie.title);
 
         const show1 = document.getElementById('showdown-poster-1');
@@ -3258,94 +3569,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (resultViewSearchInput) {
         resultViewSearchInput.addEventListener('focus', triggerAuthGuard);
-
-        const clearBtn = document.getElementById('result-view--clear-btn');
-
-        resultViewSearchInput.addEventListener('input', (e) => {
-            if (triggerAuthGuard(e)) return;
-
-            const val = e.target.value.toLowerCase();
-
-            // Toggle clear button visibility
-            if (clearBtn) clearBtn.style.display = val.length > 0 ? 'block' : 'none';
-
-            if (val.length < 1) { // 1 Character Trigger
-                resultViewSearchDropdown.style.display = 'none';
-                return;
-            }
-
-            resultViewSearchDropdown.style.display = 'block';
-            resultViewSearchDropdown.innerHTML = '';
-
-            // OMI LOGIC DATABASE: Intelligent Dynamic Pairing
-            const db = window.mockMovies || [];
-
-            const matches = db.filter(m => m.title.toLowerCase().includes(val));
-
-            if (matches.length > 0) {
-                matches.forEach(m => {
-                    const li = document.createElement('li');
-                    li.className = 'search-item';
-                    li.style.display = 'flex';
-                    li.style.alignItems = 'center';
-                    li.style.gap = '12px';
-                    li.style.cursor = 'pointer';
-
-                    // THE FIX: Render the actual poster image instead of a font icon!
-                    const imgUrl = m.poster || 'https://placehold.co/32x48/111/FFF?text=Film';
-
-                    // THE FIX: If m.type is missing from mockData.js, fallback to 'Movie'
-                    const movieStudio = m.studio || 'Movie';
-                    const movieYear = m.year || 'TBA';
-
-                    li.innerHTML = `
-                        <div style="display: flex; align-items: center; gap: 12px; flex: 1; overflow: hidden;">
-                            <img src="${imgUrl}" style="width: 32px; height: 48px; border-radius: 4px; object-fit: cover; flex-shrink: 0;"> 
-                            <div style="min-width: 0;">
-                                <strong style="color: var(--color-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;">${m.title}</strong>
-                                <span style="font-size: 11px; display: block; color: var(--color-secondary);">${movieStudio} • ${movieYear}</span>
-                            </div>
-                        </div>
-                        <i class="fa-solid fa-magnifying-glass-chart search-right-icon" style="margin-left: 12px; flex-shrink: 0;"></i>
-                    `;
-
-                    li.addEventListener('click', () => {
-                        localStorage.setItem('cinescore_active_movie_data', JSON.stringify(m));
-                        resultViewSearchInput.value = m.title;
-                        resultViewSearchDropdown.style.display = 'none';
-                        resultViewSearchBtn.click();
-                    });
-                    resultViewSearchDropdown.appendChild(li);
-                });
-
-            } else {
-                resultViewSearchDropdown.innerHTML = `<li class="search-item" style="pointer-events: none; opacity: 0.5; text-align: center;">No algorithm match found.</li>`;
-            }
-        });
-
-        if (typeof attachKeyboardNav === 'function') {
-            attachKeyboardNav(resultViewSearchInput, resultViewSearchDropdown);
-        }
-
-        // NEW: Clear Button Logic
-        if (clearBtn) {
-            clearBtn.addEventListener('click', () => {
-                resultViewSearchInput.value = '';
-                resultViewSearchDropdown.style.display = 'none';
-                clearBtn.style.display = 'none';
-                resultViewSearchInput.focus(); // Keep cursor in box
-            });
-        }
-
-        // NEW: Close dropdown on 'Escape' or clicking outside
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && resultViewSearchDropdown) resultViewSearchDropdown.style.display = 'none';
-        });
-        document.addEventListener('click', (e) => {
-            if (!e.target.closest('.search-bar-inline') && resultViewSearchDropdown) {
-                resultViewSearchDropdown.style.display = 'none';
-            }
-        });
     }
 
     // ==========================================
@@ -3397,20 +3620,7 @@ function renderPredictionGrids() {
     }
 
     // Render Market Radar (The Perfect Loop)
-    if (trendingGrid && window.upcomingRadar) {
-        trendingGrid.innerHTML = '';
-        window.upcomingRadar.forEach(radar => {
-            trendingGrid.innerHTML += `
-                <div class="poster-card">
-                    <img src="${radar.img}" alt="${radar.title}">
-                    <div class="poster-overlay" style="align-items: center; justify-content: center; text-align: center;">
-                        <span style="font-size: 11px; color: var(--color-warning); font-weight: 800; text-transform: uppercase; margin-bottom: 8px;">Expected ${radar.release}</span>
-                        <h4 style="color: #fff; margin: 0 0 16px 0; font-size: 18px;">${radar.title}</h4>
-                        <button onclick="triggerRadarPrediction('${radar.title}')" class="hero-btn" style="padding: 10px 20px; font-size: 13px; color: #fff !important;">Predict Now <i class="fa-solid fa-bolt" style="margin-left: 6px;"></i></button>
-                    </div>
-                </div>`;
-        });
-    }
+    // Removed because initUniversalDailyRotations already populates #trending-grid perfectly with real TMDB data on load!
 }
 
 // Radar Click Handler: Loops user back to prediction engine
@@ -3631,13 +3841,7 @@ window.renderLegacyTab = function (sortType = 'latest') {
     });
 };
 
-// Auto-run macros and legacy tab on load
-document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => {
-        if (typeof window.calculateHubMacros === 'function') window.calculateHubMacros();
-        if (typeof window.renderLegacyTab === 'function') window.renderLegacyTab();
-    }, 100);
-});
+// Consolidated with master loader.
 
 // Hook Macros to loadSavedMovies (if possible)
 const originalLoadSavedMovies = window.loadSavedMovies;
@@ -3812,129 +4016,135 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ============================================================
    15. PREDICTION COMMAND CENTER: AUTOCOMPLETE ENGINE
    ============================================================ */
-document.addEventListener("DOMContentLoaded", () => {
+function initDefaultSearch() {
     const searchInput = document.getElementById('default-view-search-input');
     const resultsMenu = document.getElementById('default-view-search-dropdown');
     const analyzeBtn = document.getElementById('default-view-search-btn');
-    const defaultClearBtn = document.getElementById('default-view-search-clear'); // THE FIX: Target the X button safely
+    const defaultClearBtn = document.getElementById('default-view-search-clear'); 
 
     if (!searchInput || !resultsMenu) return;
 
-    // THE FIX: Bind click listener to the X button to clear input
     if (defaultClearBtn) {
         defaultClearBtn.addEventListener('click', () => {
             searchInput.value = '';
             defaultClearBtn.style.display = 'none';
             closeAllLists();
-            searchInput.focus(); // Keep focus after clearing
+            searchInput.focus(); 
         });
     }
 
+    let lastSearchId = 0;
     let currentFocus = -1;
 
-    searchInput.addEventListener('input', function () {
-        const val = this.value.trim().toLowerCase();
-        
-        // THE FIX: Toggle the X button based on input value
-        if (defaultClearBtn) {
-            defaultClearBtn.style.display = this.value.length > 0 ? 'inline-block' : 'none';
+    function toggleSearchLoading(iconId, isLoading) {
+        const icon = document.getElementById(iconId);
+        if (!icon) return;
+        if (isLoading) {
+            icon.classList.remove('fa-magnifying-glass');
+            icon.classList.add('fa-spinner', 'fa-spin');
+        } else {
+            icon.classList.remove('fa-spinner', 'fa-spin');
+            icon.classList.add('fa-magnifying-glass');
+        }
+    }
+
+    const performDefaultSearch = async (val, currentSearchId) => {
+        const mockMatches = (window.mockMovies || []).filter(m => 
+            m.title.toLowerCase().includes(val.toLowerCase())
+        ).slice(0, 3);
+
+        if (mockMatches.length > 0 && currentSearchId === lastSearchId) {
+            renderDefaultResults(mockMatches, true);
         }
 
-        closeAllLists();
-        if (!val) return;
+        try {
+            let tmdbResults = await window.TMDB_API.searchMovies(val);
+            if (!tmdbResults || tmdbResults.length === 0) throw new Error("TMDB returned empty");
+            toggleSearchLoading('default-view-search-icon', false);
+            if (currentSearchId !== lastSearchId) return;
 
-        currentFocus = -1;
-        resultsMenu.classList.remove('hidden');
-
-        let matches = 0;
-        if (window.mockMovies) {
-            window.mockMovies.forEach(movie => {
-                if (movie.title.toLowerCase().includes(val) && matches < 5) {
-                    matches++;
-
-                    const matchStart = movie.title.toLowerCase().indexOf(val);
-                    const matchEnd = matchStart + val.length;
-                    const beforeMatch = movie.title.substring(0, matchStart);
-                    const matchText = movie.title.substring(matchStart, matchEnd);
-                    const afterMatch = movie.title.substring(matchEnd);
-
-                    const li = document.createElement('li');
-
-                    // THE FIX: Flawless layout matching your exact requirements
-                    li.innerHTML = `
-                        <div style="display: flex; align-items: center; justify-content: space-between; width: 100%;">
-                            <div style="display: flex; align-items: center; gap: 16px;">
-                                <img src="${movie.poster}" alt="Poster" style="width: 40px; height: 60px; object-fit: cover; border-radius: 6px; box-shadow: 0 4px 10px rgba(0,0,0,0.5);">
-                                <div style="display: flex; flex-direction: column; align-items: flex-start; text-align: left;">
-                                    <span style="font-size: 15px; color: var(--color-primary); font-weight: 500; margin-bottom: 4px;">
-                                        ${beforeMatch}<strong style="color: var(--color-accent); font-weight: 800;">${matchText}</strong>${afterMatch}
-                                    </span>
-                                    <span style="font-size: 12px; color: var(--color-tertiary); font-weight: 600;">
-                                        ${movie.year || '2026'} • ${movie.studio || 'Studio'}
-                                    </span>
-                                </div>
-                            </div>
-                            <i class="fa-solid fa-arrow-trend-up" style="color: var(--color-secondary); font-size: 14px; opacity: 0.5;"></i>
-                        </div>
-                    `;
-
-                    li.addEventListener('click', () => {
-                        searchInput.value = movie.title;
-                        closeAllLists();
-                        triggerPredictionState(movie.title);
-                    });
-                    resultsMenu.appendChild(li);
+            let finalMatches = [...(tmdbResults || []).slice(0, 5)];
+            mockMatches.forEach(mock => {
+                if (!finalMatches.find(tmdb => tmdb.title.toLowerCase() === mock.title.toLowerCase())) {
+                    finalMatches.push({ ...mock, poster_path: mock.poster_path || null, id: mock.id || 0 });
                 }
             });
-        }
 
-        if (matches === 0) {
-            const li = document.createElement('li');
-            li.innerHTML = `<div style="display: flex; align-items: center; padding: 8px;"><i class="fa-solid fa-circle-exclamation" style="color: var(--color-danger); margin-right: 12px;"></i> <span style="color: var(--color-tertiary);">No upcoming films found...</span></div>`;
-            li.style.pointerEvents = 'none';
-            resultsMenu.appendChild(li);
-        }
-    });
-
-    searchInput.addEventListener('keydown', function (e) {
-        let items = resultsMenu.getElementsByTagName('li');
-        if (!items || items.length === 0 || items[0].style.pointerEvents === 'none') return;
-
-        if (e.key === "ArrowDown") {
-            currentFocus++;
-            addActive(items);
-        } else if (e.key === "ArrowUp") {
-            currentFocus--;
-            addActive(items);
-        } else if (e.key === "Enter") {
-            e.preventDefault();
-            if (currentFocus > -1) {
-                if (items[currentFocus]) items[currentFocus].click();
-            } else {
-                triggerPredictionState(searchInput.value);
-                closeAllLists();
+            if (searchInput.value.trim().toLowerCase() !== val.toLowerCase()) return;
+            renderDefaultResults(finalMatches, false);
+        } catch (err) {
+            if (currentSearchId === lastSearchId) {
+                console.error("Default Search Failed:", err);
+                toggleSearchLoading('default-view-search-icon', false);
+                renderDefaultResults(mockMatches, false);
             }
         }
-    });
+    };
 
-    function addActive(items) {
-        if (!items) return false;
-        removeActive(items);
-        if (currentFocus >= items.length) currentFocus = items.length - 1;
-        if (currentFocus < 0) currentFocus = 0;
-        items[currentFocus].classList.add("selected");
-        items[currentFocus].scrollIntoView({ block: "nearest" });
-    }
-
-    function removeActive(items) {
-        for (let i = 0; i < items.length; i++) {
-            items[i].classList.remove("selected");
+    const renderDefaultResults = (matches, isLoadingTMDB) => {
+        if (matches.length === 0) {
+            if (!isLoadingTMDB) {
+                resultsMenu.innerHTML = '<li style="padding: 15px; text-align: center; color: var(--color-secondary); pointer-events: none;">No upcoming films found</li>';
+            }
+            return;
         }
-    }
+
+        resultsMenu.innerHTML = '';
+        matches.forEach(movie => {
+            const imgUrl = movie.poster_path ? `${window.TMDB_API.IMG_URL}${movie.poster_path}` : (movie.poster || 'https://placehold.co/40px/60px/111/FFF?text=Film');
+            const releaseYear = movie.release_date ? movie.release_date.split('-')[0] : (movie.year || 'TBA');
+            const genres = (movie.genre_ids && movie.genre_ids.length > 0) 
+                ? movie.genre_ids.slice(0, 2).map(id => GENRE_MAP[id]).filter(Boolean).join(' / ') 
+                : (movie.genres ? (Array.isArray(movie.genres) ? movie.genres.slice(0,2).join(' / ') : movie.genres.split(',').slice(0,2).join(' / ')) : 'Cinema');
+
+            const li = document.createElement('li');
+            li.className = 'search-item';
+            li.style.display = 'flex';
+            li.style.alignItems = 'center';
+
+            li.innerHTML = `<img class="search-poster" src="${imgUrl}" style="width:42px;height:60px;object-fit:cover;border-radius:4px;flex-shrink:0;" onerror="this.src='https://placehold.co/42x60/111/FFF?text=Film'"><div style="flex:1;min-width:0;text-align:left;"><h4 class="search-title" style="margin:0 0 2px 0;font-size:14px;font-weight:600;color:var(--color-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${movie.title}</h4><span style="font-size:11px;color:var(--color-secondary);display:block;">${releaseYear} · ${genres}</span></div><i class="fa-solid fa-gauge-high search-right-icon" style="font-size:18px;opacity:0.35;flex-shrink:0;margin-left:10px;color:var(--color-accent);"></i>`;
+
+            li.addEventListener('click', () => {
+                const releaseDateStr = movie.release_date;
+                if (releaseDateStr) {
+                    const releaseDate = new Date(releaseDateStr);
+                    const today = new Date();
+                    const tenDaysAgo = new Date(today.getTime() - (10 * 24 * 60 * 60 * 1000));
+                    if (releaseDate < tenDaysAgo) {
+                        if (typeof window.showCustomAlert === 'function') {
+                            window.showCustomAlert('error', 'Prediction Locked', `<b>${movie.title}</b> has already been released.`);
+                        }
+                        return;
+                    }
+                }
+                const activeData = {
+                    title: movie.title, poster: imgUrl, year: releaseYear, id: movie.id, 
+                    genres: (movie.genre_ids || []).map(id => GENRE_MAP[id]).filter(Boolean)
+                };
+                localStorage.setItem('cinescore_active_movie_data', JSON.stringify(activeData));
+                searchInput.value = movie.title;
+                closeAllLists();
+                if (typeof executePredictionBridge === 'function') executePredictionBridge(movie.title);
+            });
+            resultsMenu.appendChild(li);
+        });
+
+        if (isLoadingTMDB) {
+            const loader = document.createElement('li');
+            loader.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Live database syncing...';
+            loader.style.cssText = "padding: 10px; text-align: center; color: var(--color-accent); font-size: 12px; opacity: 0.7;";
+            resultsMenu.appendChild(loader);
+        }
+        resultsMenu.classList.remove('hidden');
+        resultsMenu.style.display = 'block';
+    };
+
+    if (typeof attachKeyboardNav === 'function') attachKeyboardNav(searchInput, resultsMenu);
 
     function closeAllLists() {
         resultsMenu.innerHTML = '';
         resultsMenu.classList.add('hidden');
+        resultsMenu.style.display = 'none';
     }
 
     document.addEventListener("click", function (e) {
@@ -3951,26 +4161,208 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // --- CLEAR ICON LOGIC ---
-    const clearBtn = document.getElementById('default-view-clear-btn');
-    if (searchInput && clearBtn) {
-        searchInput.addEventListener('input', () => {
-            // THE FIX: Directly manipulate style.display to guarantee it works
-            if (searchInput.value.length > 0) {
-                clearBtn.style.display = 'block';
-            } else {
-                clearBtn.style.display = 'none';
-            }
-        });
+    const clearBtn = document.getElementById('default-view-search-clear');
+    let defaultSearchTimeout;
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            const val = e.target.value.trim();
+            const query = val.toLowerCase();
+            clearTimeout(defaultSearchTimeout);
 
+            if (clearBtn) clearBtn.style.display = val.length > 0 ? 'block' : 'none';
+            
+            if (val.length === 1) {
+                resultsMenu.innerHTML = '<li style="padding:16px;text-align:center;font-size:12px;opacity:0.6;color:var(--color-secondary);">Type at least 2 characters to search...</li>';
+                resultsMenu.style.display = 'block';
+                return;
+            }
+            if (val.length < 1) {
+                closeAllLists();
+                toggleSearchLoading('default-view-search-icon', false);
+                return;
+            }
+            
+            // 1. Instant UI Feedback (Zero Latency)
+            toggleSearchLoading('default-view-search-icon', true);
+            
+            // 2. Debounced Search Call
+            defaultSearchTimeout = setTimeout(() => {
+                // 3. Prevent Race Conditions (Stale Data Check)
+                if (searchInput.value.trim().toLowerCase() !== query) return;
+
+                performDefaultSearch(val, ++lastSearchId);
+            }, 400);
+        });
+    }
+
+    if (clearBtn && searchInput) {
         clearBtn.addEventListener('click', () => {
             searchInput.value = '';
             clearBtn.style.display = 'none'; // Hide instantly
             closeAllLists();
+            toggleSearchLoading('default-view-search-icon', false);
             searchInput.focus();
         });
     }
 
-});
+    // --- THE RESULTS VIEW SEARCH FIX (Upgraded UI) ---
+    const resultSearchInput = document.getElementById('result-view-search-input');
+    const resultSearchBtn = document.getElementById('result-view-search-btn');
+    const resultSearchDropdown = document.getElementById('result-view-search-dropdown');
+    const resultClearBtn = document.getElementById('pred-clear-btn');
+
+    if (resultSearchInput && resultSearchBtn) {
+        resultSearchInput.addEventListener('input', () => {
+            if (resultClearBtn) resultClearBtn.style.display = resultSearchInput.value ? 'block' : 'none';
+        });
+
+        // Universal Close for Dropdowns
+        document.addEventListener('click', (e) => {
+            if (resultSearchDropdown && !resultSearchInput.contains(e.target) && !resultSearchDropdown.contains(e.target)) {
+                resultSearchDropdown.style.display = 'none';
+            }
+            const showdownDropdown = document.getElementById('opponent-search-dropdown');
+            const showdownInput = document.getElementById('opponent-search-input');
+            if (showdownDropdown && showdownInput && !showdownInput.contains(e.target) && !showdownDropdown.contains(e.target)) {
+                showdownDropdown.style.display = 'none';
+            }
+        });
+
+        if (resultClearBtn) {
+            resultClearBtn.addEventListener('click', () => {
+                resultSearchInput.value = '';
+                resultClearBtn.style.display = 'none';
+                if (resultSearchDropdown) resultSearchDropdown.style.display = 'none';
+                if (typeof toggleSearchLoading === 'function') toggleSearchLoading('result-view-search-icon', false);
+                resultSearchInput.focus();
+            });
+        }
+
+        const runPredict = () => {
+            if (resultSearchInput.value) {
+                if (resultSearchDropdown) resultSearchDropdown.style.display = 'none';
+                triggerPredictionState(resultSearchInput.value);
+            }
+        };
+
+        resultSearchBtn.addEventListener('click', runPredict);
+        if (typeof attachKeyboardNav === 'function') attachKeyboardNav(resultSearchInput, resultSearchDropdown);
+
+        let resultSearchTimeout;
+        resultSearchInput.addEventListener('input', () => {
+            const val = resultSearchInput.value.trim();
+            const query = val.toLowerCase();
+            clearTimeout(resultSearchTimeout);
+
+            if (resultClearBtn) resultClearBtn.style.display = val.length > 0 ? 'block' : 'none';
+            
+            if (val.length === 1) {
+                if (resultSearchDropdown) {
+                    resultSearchDropdown.innerHTML = '<li style="padding:16px;text-align:center;font-size:12px;opacity:0.6;color:var(--color-secondary);">Type at least 2 characters to search...</li>';
+                    resultSearchDropdown.style.display = 'block';
+                }
+                return;
+            }
+            if (val.length < 1) { 
+                if (resultSearchDropdown) resultSearchDropdown.style.display = 'none'; 
+                return; 
+            }
+
+            // 1. Instant UI Feedback (Zero Latency)
+            if (typeof toggleSearchLoading === 'function') toggleSearchLoading('result-view-search-icon', true);
+            if (resultSearchDropdown) {
+                resultSearchDropdown.style.display = 'block';
+                resultSearchDropdown.innerHTML = '<li style="display: flex; align-items: center; justify-content: center; gap: 10px; padding: 20px; color: var(--color-accent); font-size: 13px; opacity: 0.8;"><i class="fa-solid fa-circle-notch fa-spin"></i> Searching database...</li>';
+            }
+
+            // 2. Debounced API Call
+            resultSearchTimeout = setTimeout(async () => {
+                // 1. Search TMDB
+                const tmdbResults = await window.TMDB_API.searchMovies(query);
+                
+                // 3. Prevent Race Conditions (Stale Data Check)
+                if (resultSearchInput.value.trim().toLowerCase() !== query) return;
+                
+                if (typeof toggleSearchLoading === 'function') toggleSearchLoading('result-view-search-icon', false);
+
+                // 2. Search Mock DB
+                const mockMatches = (window.mockMovies || []).filter(m => 
+                    m.title.toLowerCase().includes(query)
+                ).slice(0, 3);
+
+                // 4. Categorize & Prioritize
+                const tmdbFinal = (tmdbResults || []).slice(0, 5);
+                const mockFinal = mockMatches.filter(mock => 
+                    !tmdbFinal.find(tmdb => tmdb.title.toLowerCase() === mock.title.toLowerCase())
+                );
+
+                if (resultSearchDropdown) {
+                    if (tmdbFinal.length === 0 && mockFinal.length === 0) {
+                        resultSearchDropdown.innerHTML = '<li style="padding: 12px; color: var(--color-secondary); text-align: center;">No results found</li>';
+                    } else {
+                        let html = '';
+                        if (tmdbFinal.length > 0) {
+                            html += tmdbFinal.map(m => renderSearchItem(m, true)).join('');
+                        }
+                        if (mockFinal.length > 0) {
+                            html += mockFinal.map(m => renderSearchItem(m, false)).join('');
+                        }
+                        resultSearchDropdown.innerHTML = html;
+                    }
+                    resultSearchDropdown.style.display = 'block';
+                }
+            }, 400);
+        });
+
+        // Helper for consistent rendering
+        function renderSearchItem(m, isTMDB) {
+            const poster = isTMDB ? (m.poster_path ? window.TMDB_API.IMG_URL + m.poster_path : 'https://placehold.co/100x150?text=No+Poster') : (m.poster || 'https://placehold.co/100x150?text=No+Poster');
+            const year = isTMDB ? (m.release_date ? m.release_date.split('-')[0] : 'TBA') : (m.year || 'TBA');
+            const genresArr = isTMDB ? (m.genre_ids || []).map(id => GENRE_MAP[id]).filter(Boolean) : (Array.isArray(m.genres) ? m.genres : (m.genres ? m.genres.split(/[\/,]/).map(g=>g.trim()) : []));
+            const displayGenre = genresArr.length > 0 ? genresArr.slice(0,2).join(' / ') : 'Cinema';
+            const safeGenreStr = genresArr.join(',').replace(/'/g, "\\'");
+            
+            const today = new Date();
+            const cutoffDate = new Date();
+            cutoffDate.setDate(today.getDate() - 10);
+            const relDate = m.release_date ? new Date(m.release_date) : null;
+            const isLocked = relDate && relDate < cutoffDate;
+
+            return `
+                <li class="search-item" style="display: flex; align-items: center; gap: 12px; padding: 12px; cursor: pointer; border-bottom: 1px solid var(--color-border);" 
+                    onclick="window.handleResultSearchSelection('${m.title.replace(/'/g, "\\'")}', '${poster}', '${year}', '${m.release_date || ""}', '${(m.overview || m.synopsis || "").replace(/'/g, "\\'")}', ${m.id || 0}, '${safeGenreStr}', ${isLocked})">
+                    <img src="${poster}" style="width: 32px; height: 48px; border-radius: 4px; object-fit: cover;">
+                    <div style="flex: 1; min-width: 0;">
+                        <strong style="color: var(--color-primary); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${m.title}</strong>
+                        <span style="font-size: 11px; color: var(--color-secondary);">${year} · ${displayGenre}</span>
+                    </div>
+                    ${'<i class="fa-solid fa-magnifying-glass-chart search-right-icon" style="font-size:18px;opacity:0.35;flex-shrink:0;margin-left:10px;color:var(--color-accent);"></i>'}
+                </li>
+            `;
+        }
+
+        // Propagation Fix: Handle the selection and trigger full hydration
+        window.handleResultSearchSelection = function(title, poster, year, relDate, synopsis, id, genreStr, isLocked) {
+            if (isLocked) {
+                if (typeof window.showCustomAlert === 'function') {
+                    window.showCustomAlert('error', 'Movie Already Released!', 'You can\'t predict a movie that has already been released for more than 10 days.');
+                } else {
+                    alert('Movie Already Released!');
+                }
+                return;
+            }
+            if (resultSearchDropdown) resultSearchDropdown.style.display = 'none';
+            resultSearchInput.value = title;
+            
+            localStorage.setItem('cinescore_active_movie_data', JSON.stringify({
+                title: title, poster: poster,
+                year: year, release_date: relDate,
+                synopsis: synopsis, id: id, genres: genreStr ? genreStr.split(',') : []
+            }));
+            if (typeof triggerPredictionState === 'function') triggerPredictionState(title);
+        };
+    }
+}
 
 /* ============================================================
    10. THE IGNITION & DATA INJECTION ENGINE
@@ -4005,15 +4397,32 @@ function triggerPredictionState(rawMovieName) {
     if (!rawMovieName || !rawMovieName.trim()) return null;
 
     let movieName = rawMovieName.trim();
-    const db = window.mockMovies || [];
+    
+    // THE FIX: Check for local TMDB metadata first
+    const activeData = JSON.parse(localStorage.getItem('cinescore_active_movie_data'));
+    if (activeData && activeData.title.toLowerCase() === movieName.toLowerCase()) {
+        // --- 10-DAY BUFFER LOGIC ---
+        if (activeData.release_date) {
+            const releaseDate = new Date(activeData.release_date);
+            const today = new Date();
+            const tenDaysAgo = new Date(today.getTime() - (10 * 24 * 60 * 60 * 1000));
+            if (releaseDate < tenDaysAgo) {
+                if (typeof window.showCustomAlert === 'function') {
+                    window.showCustomAlert('error', 'Prediction Locked', `<b>${activeData.title}</b> is outside the prediction window. We only provide forecasts for upcoming and recent films.`);
+                }
+                return null;
+            }
+        }
+        sessionStorage.setItem('cineScore_activePrediction', activeData.title);
+        return activeData.title;
+    }
 
-    // THE FIX: Fuzzy Resolution Engine (Resolves sloppy typing like "doomsay")
+    const db = window.mockMovies || [];
     const exactMatch = db.find(m => m.title.toLowerCase() === movieName.toLowerCase());
     
     if (exactMatch) {
         movieName = exactMatch.title;
     } else {
-        // Find best fuzzy match (contains the string)
         const fuzzyMatch = db.find(m => m.title.toLowerCase().includes(movieName.toLowerCase()));
         if (fuzzyMatch) {
             movieName = fuzzyMatch.title;
@@ -4021,8 +4430,6 @@ function triggerPredictionState(rawMovieName) {
             // No match found
             if (typeof window.showCustomAlert === 'function') {
                 window.showCustomAlert('error', 'Unrecognized Title', `We couldn't find a cinematic match for "<b>${rawMovieName}</b>". Please select from the dropdown options.`);
-            } else {
-                alert(`Unrecognized title: ${rawMovieName}`);
             }
             return null;
         }
@@ -4036,181 +4443,374 @@ function loadMovieData(movieName, shouldAnimate) {
     const resultsView = document.getElementById('prediction-results-view');
     const blankState = document.getElementById('blank-slate-view');
     
-    if (!resultsView) return; 
+    // --- 0. GLOBAL PAGE LOADER ---
+    const pageLoader = document.getElementById('global-page-loader');
+    if (pageLoader) {
+        pageLoader.style.display = 'flex';
+        pageLoader.style.opacity = '1';
+    }
+
+    if (!resultsView) return;
 
     CineState.currentView = 'RESULTS';
+    const isLoggedIn = localStorage.getItem('cinescore_auth') === 'true';
 
-    // 1. Swipe In Sequence
+    // --- 1. INSTANT SWIPE SEQUENCE ---
     if (blankState && resultsView) {
         blankState.style.position = 'absolute';
-        blankState.style.top = '0';
         blankState.classList.replace('view-visible', 'view-hidden');
-        
         resultsView.style.display = 'block';
-        resultsView.classList.remove('view-hidden'); 
+        resultsView.classList.remove('view-hidden');
         void resultsView.offsetWidth;
         resultsView.classList.add('view-visible');
-
         setTimeout(() => {
             blankState.style.display = 'none';
-            blankState.style.position = 'relative'; // reset flow
-        }, 1000); // Wait for 1-second buttery smooth swipe
+            blankState.style.position = 'relative';
+        }, 1000);
     }
 
-    if (CineDOM.backBtn) CineDOM.backBtn.style.display = 'flex';
-
-
-    // Search mockData.js for the movie
-    let movieData = null;
-    if (window.mockMovies) {
-        movieData = window.mockMovies.find(m => m.title.toLowerCase() === movieName.toLowerCase());
+    // --- THE BACK BUTTON FIX ---
+    if (CineDOM.backBtn) {
+        CineDOM.backBtn.style.display = 'flex';
+        CineDOM.backBtn.style.opacity = '1';
     }
 
-    // Fallback data if they search something not in our DB
-    if (!movieData) {
-        movieData = { title: movieName, poster: "https://placehold.co/600x900/0B192C/FFFFFF?text=Poster", year: "2026", studio: "TBA", aiScore: 85, sentiment: "8.0", dataPoints: 1000000 };
+    // --- 2. THE TMDB CATCH: Parse LocalStorage Data ---
+    const savedData = localStorage.getItem('cinescore_active_movie_data');
+    let activeData = savedData ? JSON.parse(savedData) : { title: movieName, poster: '', year: '2026' };
+
+    // --- 2.5 THE MOCK CROSS-REFERENCE (Fixes TBA issues for new films) ---
+    // Fuzzy Match: Check if the searched title is part of the mock title or vice versa
+    const searchTitle = activeData.title.toLowerCase();
+    const localMatch = (window.mockMovies || []).find(m => {
+        const mockTitle = m.title.toLowerCase();
+        return mockTitle === searchTitle || mockTitle.includes(searchTitle) || searchTitle.includes(mockTitle);
+    });
+
+    if (localMatch) {
+        console.log("Mock Metadata Match Found:", localMatch.title);
+        // Merge Mock data but preserve the specific TMDB ID if present
+        activeData = {
+            ...localMatch,
+            ...activeData,
+            director: localMatch.director || activeData.director,
+            studio: localMatch.studio || activeData.studio,
+            cast: localMatch.cast || activeData.cast,
+            genres: localMatch.genres || activeData.genres
+        };
+        // THE PERSISTENCE FIX: Save the merged data back to storage so it survives reloads!
+        localStorage.setItem('cinescore_active_movie_data', JSON.stringify(activeData));
     }
 
-    localStorage.setItem('cinescore_active_movie_data', JSON.stringify(movieData));
+    // --- 3. INSTANT VISUAL HYDRATION (No Blank Screens) ---
+    const updateEl = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+    const updateSrc = (id, url) => { const el = document.getElementById(id); if (el) el.src = url; };
 
-    // --- DOM INJECTION (Matching your ACTUAL HTML IDs) ---
-    const updateEl = (id, value) => { if (document.getElementById(id)) document.getElementById(id).textContent = value; };
-    const updateSrc = (id, url) => { if (document.getElementById(id)) document.getElementById(id).src = url; };
+    // Check if the movie is already released to avoid 'TBA' labels
+    const isReleased = activeData.release_date ? new Date(activeData.release_date) < new Date() : false;
+    const defaultMeta = isReleased ? 'Live' : 'TBA';
 
-    updateEl('predicted-movie-title', movieData.title);
-    updateEl('paywall-movie-title', movieData.title);
-    updateEl('dyn-year', movieData.year || "2026");
-    updateEl('dyn-director', movieData.director || 'TBA');
-    updateEl('dyn-cast', movieData.cast || 'TBA');
-    updateEl('dyn-studio', movieData.studio || 'TBA');
-    updateEl('dyn-ai-score', movieData.aiScore || '92');
-    updateEl('dyn-sentiment-score', movieData.sentimentScore || '8.5');
+    updateEl('predicted-movie-title', activeData.title);
+    updateSrc('dyn-poster', activeData.poster);
+    updateEl('dyn-year', activeData.year);
+    updateEl('dyn-director', activeData.director || defaultMeta);
+    updateEl('dyn-studio', activeData.studio || defaultMeta);
+    updateEl('dyn-cast', activeData.cast || defaultMeta);
 
-    const dataPointsEl = document.getElementById('dyn-data-points');
-    if (dataPointsEl) dataPointsEl.textContent = typeof formatLargeNumber === 'function' ? formatLargeNumber(movieData.dataPoints || 2400000) : "2.4M";
-
-    updateSrc('dyn-poster', movieData.poster);
+    // SYNC SHOWDOWN LEFT POSTER
+    const showdownPoster1 = document.getElementById('showdown-poster-1');
+    const showdownName1 = document.getElementById('showdown-name-1');
+    if (showdownPoster1) showdownPoster1.src = activeData.poster;
+    if (showdownName1) showdownName1.textContent = activeData.title;
+    
+    // Synopsis & Background Sync
+    if (activeData.synopsis) updateEl('dyn-synopsis', activeData.synopsis);
     const heroBg = document.getElementById('hero-bg-blur');
-    if (heroBg) {
-        heroBg.style.backgroundImage = `url('${movieData.poster}')`;
-    }
+    if (heroBg) heroBg.style.backgroundImage = `url('${activeData.poster}')`;
 
-    // Dynamic Genres
-    const genreContainer = document.getElementById('dyn-genres');
-    if (genreContainer) {
-        const genres = movieData.genres || ["Action", "Blockbuster"];
-        genreContainer.innerHTML = genres.map(g => `<span class="genre-pill" style="margin: 0;">${g}</span>`).join('');
-    }
+    // --- 4. THE FASTAPI HANDSHAKE (syncAPIData) ---
+    async function syncAPIData() {
+        const pitchPayload = {
+            title: activeData.title,
+            tmdb_id: activeData.id,
+            primary_genre: (activeData.genres && activeData.genres.length > 0) ? (Array.isArray(activeData.genres) ? activeData.genres[0] : activeData.genres) : "Action", 
+            primary_studio: activeData.studio || "TBA",
+            actor_1_name: (activeData.cast && activeData.cast !== 'TBA') ? activeData.cast.split(',')[0].trim() : "TBA",
+            director_name: activeData.director || "TBA",
+            is_franchise: activeData.title.toLowerCase().includes('part') || activeData.title.toLowerCase().includes('sequel') || false
+        };
 
-    // THE FIX 1: DYNAMIC SYNOPSIS (Fixes stretching/voids in Hero Card)
-    const synopsisWrapper = document.getElementById('dyn-synopsis-wrapper');
-    const synopsisEl = document.getElementById('dyn-synopsis');
-    if (synopsisWrapper && synopsisEl) {
-        if (movieData.title && movieData.title.length < 15) {
-            synopsisWrapper.style.display = 'block';
-            const fullSynopsis = movieData.synopsis || 'Thrust into an unfamiliar situation with everything on the line, a determined protagonist must confront their deepest doubts to overcome mounting obstacles. As the journey tests their limits, they will discover hidden strengths and forever alter their destiny.';
-            const truncatedText = fullSynopsis.length > 95 ? fullSynopsis.substring(0, 95).trim() + '... ' : fullSynopsis + ' ';
-            const imdbLink = `https://www.imdb.com/find/?q=${encodeURIComponent(movieData.title)}`;
-            synopsisEl.innerHTML = `${truncatedText} <a href="${imdbLink}" target="_blank" style="color: var(--color-accent); font-weight: 600; text-decoration: none;">Read more</a>`;
-        } else {
-            synopsisWrapper.style.display = 'none';
+        try {
+            const apiResult = await window.CineAPI.predict(pitchPayload);
+            if (!apiResult) throw new Error("CineAPI.predict returned null, falling back to mock");
+            
+            if (apiResult) {
+                window._lastApiResult = apiResult; // Store for badge and other consumers
+
+                // Immediately update hash badge with real TMDB ID from API
+                const hashEl = document.getElementById('prediction-hash');
+                if (hashEl && apiResult.pitch_summary?.tmdb_id) {
+                    hashEl.textContent = `#CS-${String(apiResult.pitch_summary.tmdb_id).padStart(6, '0')}`;
+                }
+
+                // 4A. Map Summary Stats
+                const revM = (apiResult.financial_forecast.projected_revenue/1_000_000);
+                const score = apiResult.acclaim_forecast.score;
+                const signal = apiResult.financial_forecast.signal; // GREEN, RED, AMBER
+                
+                // --- DYNAMIC VERDICT LOGIC ---
+                let verdictLabel = "Market Neutral";
+                let verdictMeta = "Calculated from multi-vector trend analysis";
+
+                if (signal === 'GREEN') {
+                    if (score >= 8.0) { verdictLabel = "Global Mega-Hit"; verdictMeta = "Elite financial & critical breakout projected"; }
+                    else if (score >= 7.0) { verdictLabel = "Commercial Success"; verdictMeta = "Strong theatrical legs with four-quadrant appeal"; }
+                    else { verdictLabel = "Front-Loaded Hit"; verdictMeta = "Massive opening expected with rapid decay"; }
+                } else if (signal === 'RED') {
+                    if (score >= 8.0) { verdictLabel = "Cult Classic"; verdictMeta = "High critical praise vs challenging market physics"; }
+                    else if (score >= 7.0) { verdictLabel = "VOD Specialist"; verdictMeta = "Ancillary revenue critical to recoupment"; }
+                    else { verdictLabel = "Box Office Risk"; verdictMeta = "High market saturation & audience resistance"; }
+                } else {
+                    verdictLabel = "Moderate Performer"; verdictMeta = "Stable trajectory within genre benchmarks";
+                }
+
+                updateEl('dyn-verdict', verdictLabel);
+                const verdictMetaEl = document.getElementById('dyn-verdict-meta');
+                if (verdictMetaEl) verdictMetaEl.innerHTML = `<i class="fa-solid fa-arrow-trend-up"></i> ${verdictMeta}`;
+
+                updateEl('dyn-box-office', `$${revM.toFixed(0)}M`);
+                updateEl('dyn-imdb', score.toFixed(1)); 
+                updateEl('dyn-profit-target', `$${(apiResult.financial_forecast.break_even_point/1_000_000).toFixed(0)}M`);
+                updateEl('dyn-est-budget', `Est. Budget: $${(apiResult.pitch_summary.estimated_budget_used/1_000_000).toFixed(0)}M`);
+
+                // 4B. Map Right-Side Hero Metrics (Confidence & Sentiment)
+                const confScore = apiResult.confidence_score || 85;
+                updateEl('dyn-ai-score', Math.round(confScore));
+                const gaugeFill = document.querySelector('.ai-gauge-fill');
+                if (gaugeFill) gaugeFill.style.strokeDashoffset = 264 - (264 * (confScore / 100));
+
+                const confLabel = document.getElementById('dyn-ai-confidence-label');
+                if (confLabel) {
+                    if (confScore >= 90) confLabel.textContent = "Very High Confidence";
+                    else if (confScore >= 80) confLabel.textContent = "High Confidence";
+                    else if (confScore >= 70) confLabel.textContent = "Moderate Confidence";
+                    else if (confScore >= 50) confLabel.textContent = "Average Confidence";
+                    else confLabel.textContent = "Low Confidence";
+                }
+
+                const sentScore = apiResult.acclaim_forecast.score || 7.5;
+                updateEl('dyn-sentiment-score', sentScore.toFixed(1));
+                const sentPointer = document.querySelector('.sentiment-pointer');
+                if (sentPointer) sentPointer.style.left = `${(sentScore / 10) * 100}%`;
+
+                // 4F. Update Social/Sentiment Chart Subtitles with API Source (Non-Destructive)
+                let sourceText = apiResult.ai_insights?.market_signals?.source || "Live Data Feed";
+                
+                // Shorten the long YouTube/PSI string for UI tightness
+                if (sourceText.includes("programmable search engine")) sourceText = "(Youtube/PSI)";
+                else if (!sourceText.startsWith("(")) sourceText = `(${sourceText})`;
+
+                const chartSubtitles = document.querySelectorAll('.chart-subtitle');
+                chartSubtitles.forEach(sub => {
+                    const originalText = sub.textContent.split(' | ')[0].trim();
+                    if (originalText.includes('Platform Buzz') || originalText.includes('30-Day Trajectory')) {
+                        sub.textContent = `${originalText} | ${sourceText}`;
+                    }
+                });
+
+                // 4C. Map Verdicts & Enriched Meta
+                const verdicts = apiResult.ai_insights.verdicts;
+                const updateVerdict = (id, html) => { 
+                    const el = document.getElementById(id); 
+                    if (el && html && html.length > 30) el.innerHTML = `<i>${html}</i>`; 
+                };
+                if (verdicts.general) updateVerdict('verdict-general', verdicts.general);
+                if (verdicts.finance) updateVerdict('verdict-finance', verdicts.finance);
+                if (verdicts.critical) updateVerdict('verdict-critical', verdicts.critical);
+
+                // 4D. Overwrite TBA with real API metadata (director, cast, studio)
+                if (apiResult.pitch_summary.director_name && apiResult.pitch_summary.director_name !== 'TBA') 
+                    updateEl('dyn-director', apiResult.pitch_summary.director_name);
+                if (apiResult.pitch_summary.studio && apiResult.pitch_summary.studio !== 'TBA') 
+                    updateEl('dyn-studio', apiResult.pitch_summary.studio);
+                if (apiResult.pitch_summary.cast && apiResult.pitch_summary.cast.length > 0 && apiResult.pitch_summary.cast[0] !== 'TBA') 
+                    updateEl('dyn-cast', apiResult.pitch_summary.cast.join(', '));
+
+                // 4E. Wire Algorithm Benchmarks to the comps-grid
+                // FIXED: Ensure benchmarks are NEVER vacant and show 4 categories: Actor, Director, Studio, Genre
+                const movieTitle = (activeData.title || apiResult.pitch_summary?.title || "Project");
+                updateEl('dyn-benchmark-title', `Model's Benchmarks for ${movieTitle}`);
+
+                let benchmarks = apiResult.benchmark_cards || [];
+                if (benchmarks.length === 0) {
+                    const genre = (activeData.genres && activeData.genres.length > 0) ? (Array.isArray(activeData.genres) ? activeData.genres[0] : activeData.genres) : "Action";
+                    const actor = (activeData.cast && activeData.cast !== 'TBA') ? activeData.cast.split(',')[0].trim() : "Star Power";
+                    const director = (activeData.director && activeData.director !== 'TBA') ? activeData.director : "Robert Eggers";
+                    const studio = (activeData.studio && activeData.studio !== 'TBA') ? activeData.studio : "A24";
+
+                    // THE CINESCORE BENCHMARK BRAIN (Historical Metrics)
+                    const baseMetrics = {
+                        "Actor's Best": { title: actor === "Aaron Taylor-Johnson" ? "Bullet Train" : (actor.includes("Alcock") ? "The School for Good and Evil" : "Top Gun: Maverick"), type: "Actor's Best" },
+                        "Director's Best": { title: director === "Robert Eggers" ? "The Northman" : "Get Out", type: "Director's Best" },
+                        "Studio Best": { title: studio === "A24" ? "Hereditary" : (studio.includes("Warner") ? "The Batman" : "Oppenheimer"), type: "Studio Best" },
+                        "Genre Best": { title: genre === "Horror" ? "Smile" : (genre === "Superhero" ? "Deadpool 3" : "John Wick: Chapter 4"), type: "Genre Best" }
+                    };
+
+                    const rawComps = [
+                        { ...baseMetrics["Actor's Best"], budget: "$90M", opening: "$30M", gross: "$239M", roi: "2.6x" },
+                        { ...baseMetrics["Director's Best"], budget: "$70M", opening: "$12M", gross: "$69M", roi: "1.0x" },
+                        { ...baseMetrics["Studio Best"], budget: "$25M", opening: "$1M", gross: "$141M", roi: "5.6x" },
+                        { ...baseMetrics["Genre Best"], budget: "$17M", opening: "$22M", gross: "$217M", roi: "12.7x" }
+                    ];
+
+                    // DYNAMIC POSTER DISCOVERY: Query TMDB for each benchmark title
+                    benchmarks = await Promise.all(rawComps.map(async (c) => {
+                        try {
+                            const hits = await window.TMDB_API.searchMovies(c.title);
+                            return {
+                                ...c,
+                                vectorType: c.type,
+                                img: (hits && hits[0] && hits[0].poster_path) 
+                                    ? window.TMDB_API.IMG_URL + hits[0].poster_path 
+                                    : `https://placehold.co/400x600/111/FFF?text=${encodeURIComponent(c.title)}`
+                            };
+                        } catch (e) {
+                            return { ...c, vectorType: c.type, img: `https://placehold.co/400x600/111/FFF?text=${encodeURIComponent(c.title)}` };
+                        }
+                    }));
+                }
+                
+                window.historicalComps = benchmarks;
+                if (typeof renderPredictionGrids === 'function') renderPredictionGrids();
+
+                // 4F. INITIALIZE SHOWDOWN ARENA (Slot 1: Current Movie | Slot 2: Reset to Placeholder)
+                const predictedMovieComp = {
+                    title: apiResult.pitch_summary.title,
+                    poster: activeData.poster,
+                    totalRun: Math.round(apiResult.financial_forecast.projected_revenue / 1000000),
+                    openingWknd: Math.round(apiResult.financial_forecast.projected_revenue * 0.22 / 1000000),
+                    sentiment: Math.round(apiResult.acclaim_forecast.score * 10),
+                    momentum: apiResult.acclaim_forecast.score
+                };
+                window.updateShowdownOpponent(1, predictedMovieComp);
+
+                // Reset Slot 2 to Placeholder (Clean State)
+                const poster2 = document.getElementById('showdown-poster-2');
+                const name2 = document.getElementById('showdown-name-2');
+                const input2 = document.getElementById('opponent-search-input');
+                
+                if (poster2) {
+                    poster2.src = 'https://placehold.co/400x600/333/FFF?text=Opponent';
+                    poster2.style.opacity = '0.6';
+                }
+                if (name2) name2.textContent = 'Choose Opponent';
+                if (input2) input2.value = '';
+                
+                // Clear Slot 2 Metrics
+                ['total', 'open', 'sent', 'hype'].forEach(m => {
+                    const el = document.getElementById(`sd-${m}-2`);
+                    if (el) el.textContent = 'TBD';
+                });
+
+                // --- 5. CHART & COMP SYSTEM (Preserved per Firewall) ---
+                if (typeof window.renderDynamicCharts === 'function') {
+                    // Inject Ghost Data if missing to prevent legacy warnings
+                    if (!apiResult.sentimentLine) apiResult.sentimentLine = { pos: [60, 70, 75, 80, 85], neg: [10, 8, 7, 6, 5] };
+                    if (!apiResult.sonar) apiResult.sonar = [80, 75, 90, 85, 80];
+                    
+                    // FIXED: Pass raw values for proper scaling in funnel chart
+                    const estBudget = apiResult.pitch_summary.estimated_budget_used || 50000000;
+                    if (!apiResult.funnel) {
+                        apiResult.funnel = [
+                            estBudget, 
+                            estBudget * 0.8, // P&A Est
+                            estBudget * 2.5, // Break-Even Est
+                            apiResult.financial_forecast.projected_revenue
+                        ];
+                    }
+                    if (!apiResult.trajectory) apiResult.trajectory = [30, 50, 70, 85, 95, 100];
+                    
+                    window.renderDynamicCharts(apiResult, 'base');
+                }
+            }
+        } catch (err) {
+            console.error("Hydration Handshake Failed, injecting mock metrics:", err);
+            const activeDataBoxOffice = activeData.boxOffice ? parseFloat(activeData.boxOffice.replace(/[^0-9.]/g, '')) * (activeData.boxOffice.includes('B') ? 1000000000 : 1000000) : 1200000000;
+            const activeDataSentiment = activeData.sentimentScore ? parseFloat(activeData.sentimentScore) : 8.5;
+            
+            const mockApiResult = {
+                pitch_summary: pitchPayload,
+                financial_forecast: { projected_revenue: activeDataBoxOffice },
+                acclaim_forecast: { score: activeDataSentiment },
+                benchmark_cards: [],
+                sentimentLine: { pos: [60, 70, 75, 80, 85], neg: [10, 8, 7, 6, 5] },
+                sonar: [80, 75, 90, 85, 80]
+            };
+            window._lastApiResult = mockApiResult;
+            
+            const hashEl = document.getElementById('prediction-hash');
+            if (hashEl) hashEl.textContent = `#CS-MOCK`;
+            
+            const revM = (mockApiResult.financial_forecast.projected_revenue/1_000_000);
+            const verdictStr = revM >= 1000 ? "Billion Dollar Club" : (revM >= 600 ? "Projected Mega-Hit" : (revM >= 300 ? "Strong Performer" : "Safe Bet"));
+            
+            const verdicts = {
+                general: verdictStr,
+                finance: revM >= 1000 ? "Excellent ROI Potential" : "Positive Trajectory",
+                critical: mockApiResult.acclaim_forecast.score >= 8.0 ? "Audience Darling" : "Mixed Reception"
+            };
+            const updateVerdict = (id, html) => { 
+                const el = document.getElementById(id); 
+                if (el && html && html.length > 30) el.innerHTML = `<i>${html}</i>`; 
+            };
+            updateVerdict('verdict-general', verdicts.general);
+            updateVerdict('verdict-finance', verdicts.finance);
+            updateVerdict('verdict-critical', verdicts.critical);
+            
+            updateEl('dyn-benchmark-title', `Model's Benchmarks for ${activeData.title}`);
+            
+            const genre = (activeData.genres && activeData.genres.length > 0) ? (Array.isArray(activeData.genres) ? activeData.genres[0] : activeData.genres) : "Action";
+            const actor = (activeData.cast && activeData.cast !== 'TBA') ? activeData.cast.split(',')[0].trim() : "Star Power";
+            const director = (activeData.director && activeData.director !== 'TBA') ? activeData.director : "Robert Eggers";
+            const studio = (activeData.studio && activeData.studio !== 'TBA') ? activeData.studio : "A24";
+
+            const baseMetrics = {
+                "Actor's Best": { title: actor === "Aaron Taylor-Johnson" ? "Bullet Train" : (actor.includes("Alcock") ? "The School for Good and Evil" : "Top Gun: Maverick"), type: "Actor's Best" },
+                "Director's Best": { title: director === "Robert Eggers" ? "The Northman" : "Get Out", type: "Director's Best" },
+                "Studio Best": { title: studio === "A24" ? "Hereditary" : (studio.includes("Warner") ? "The Batman" : "Oppenheimer"), type: "Studio Best" },
+                "Genre Best": { title: genre === "Horror" ? "Smile" : (genre === "Superhero" ? "Deadpool 3" : "John Wick: Chapter 4"), type: "Genre Best" }
+            };
+
+            const rawComps = [
+                { ...baseMetrics["Actor's Best"], budget: "$90M", opening: "$30M", gross: "$239M", roi: "2.6x", img: `https://placehold.co/400x600/111/FFF?text=${encodeURIComponent(baseMetrics["Actor's Best"].title)}`, vectorType: "Actor's Best" },
+                { ...baseMetrics["Director's Best"], budget: "$70M", opening: "$12M", gross: "$69M", roi: "1.0x", img: `https://placehold.co/400x600/111/FFF?text=${encodeURIComponent(baseMetrics["Director's Best"].title)}`, vectorType: "Director's Best" },
+                { ...baseMetrics["Studio Best"], budget: "$25M", opening: "$1M", gross: "$141M", roi: "5.6x", img: `https://placehold.co/400x600/111/FFF?text=${encodeURIComponent(baseMetrics["Studio Best"].title)}`, vectorType: "Studio Best" },
+                { ...baseMetrics["Genre Best"], budget: "$17M", opening: "$22M", gross: "$217M", roi: "12.7x", img: `https://placehold.co/400x600/111/FFF?text=${encodeURIComponent(baseMetrics["Genre Best"].title)}`, vectorType: "Genre Best" }
+            ];
+            
+            window.historicalComps = rawComps;
+            if (typeof renderPredictionGrids === 'function') renderPredictionGrids();
+            
+            const predictedMovieComp = {
+                title: activeData.title,
+                poster: activeData.poster,
+                totalRun: Math.round(activeDataBoxOffice / 1000000),
+                openingWknd: Math.round(activeDataBoxOffice * 0.22 / 1000000),
+                sentiment: Math.round(activeDataSentiment * 10),
+                momentum: activeDataSentiment
+            };
+            window.updateShowdownOpponent(1, predictedMovieComp);
+            
+            if (typeof window.renderDynamicCharts === 'function') {
+                const estBudget = 50000000;
+                mockApiResult.funnel = [estBudget, estBudget * 0.8, estBudget * 2.5, activeDataBoxOffice];
+                mockApiResult.trajectory = [30, 50, 70, 85, 95, 100];
+                window.renderDynamicCharts(mockApiResult, 'base');
+            }
         }
     }
 
-    // THE FIX 2: SHOWDOWN LEFT-SIDE INJECTOR (Syncs Base Movie)
-    const updateElSafe = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
-    updateElSafe('showdown-title', movieData.battleTitle || 'Franchise Showdown');
-    updateElSafe('showdown-name-1', movieData.title);
-    const show1 = document.getElementById('showdown-poster-1');
-    if (show1) show1.src = movieData.poster;
-
-    const mockTotal = movieData.boxOffice || movieData.userPrediction || '$850M';
-    const rawTotal = parseInt(mockTotal.replace(/\D/g, '')) || 850;
-    updateElSafe('sd-total-1', mockTotal);
-    updateElSafe('sd-open-1', '$' + Math.round(rawTotal / 6) + 'M');
-    updateElSafe('sd-sent-1', movieData.sentimentScore ? (parseFloat(movieData.sentimentScore) * 10) + '%' : '85%');
-    updateElSafe('sd-hype-1', (8 + (movieData.title.length % 20) / 10).toFixed(1));
-
-    // THE FIX 3: RESET OPPONENT (Clears Right Side on new search)
-    updateElSafe('showdown-name-2', 'Choose Opponent');
-    const show2 = document.getElementById('showdown-poster-2');
-    if (show2) {
-        show2.src = 'https://placehold.co/400x600/333/FFF?text=Opponent';
-        show2.style.opacity = '0.6';
-        show2.style.filter = 'grayscale(50%)';
-    }
-    updateElSafe('sd-total-2', '--');
-    updateElSafe('sd-open-2', '--');
-    updateElSafe('sd-sent-2', '--');
-    updateElSafe('sd-hype-2', '--');
-
-    // THE FIX 4: PROCEDURAL VERDICT TEXTS (Syncs bottom layout heights)
-    const updateHTML = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = `<i>${html}</i>`; };
-    if (movieData.verdicts) {
-        updateHTML('verdict-general', movieData.verdicts.gen);
-        updateHTML('verdict-finance', movieData.verdicts.fin);
-        updateHTML('verdict-critical', movieData.verdicts.crit);
-    } else {
-        const genre = (movieData.genres && movieData.genres[0]) ? movieData.genres[0] : 'theatrical';
-        const isHighHype = (movieData.title.length % 2 === 0);
-        updateHTML('verdict-general', isHighHype ? `The active prediction is positioned as a primary tentpole release within its competitive window. Current social tracking places this ${genre} property in the upper quartile of audience awareness. Real-time NLP sentiment analysis across Twitter, TikTok, and Letterboxd indicates significant pre-release momentum, suggesting high cultural penetration and an extended life-cycle at the cinematic zeitgeist.` : `Market saturation for this ${genre} property indicates a reliant dependency on walk-up ticket sales. Algorithmic forecasting models suggest a highly concentrated demographic skew with potential resistance in gaining mainstream 4-quadrant momentum. The studio's marketing footprint will need a hyper-targeted grassroots strategy to achieve organic word-of-mouth conversion and offset a slower presale velocity curve.`);
-        updateHTML('verdict-finance', isHighHype ? `Factoring in comparable historical success, presale velocity curves point to a highly front-loaded opening weekend with a robust secondary multiplier. Financial modeling projects that the budget threshold will be crossed rapidly. Furthermore, strong international rollout corridors—specifically in Latin American and Asian markets—provide a lucrative cushion for long-term theatrical ROI and ancillary market profitability.` : `Financial diagnostic models indicate a highly conservative opening frame compared to similar IP weightings. Long-term profitability relies heavily on staggered international market penetration and post-theatrical streaming aggregation. Domestic holds will need to demonstrate strong week-over-week sub-30% drops to hit the break-even threshold dictated by the production budget and the estimated P&A spend.`);
-        updateHTML('verdict-critical', isHighHype ? `Anticipated high-contrast cinematography combined with elite directorial pedigree positions this release as a potential critical darling. Review aggregation models predict a 'Certified Fresh' metric floor of 85%. Algorithmic analysis of the creative team's previous historical output projects a baseline critical aggregate capable of influencing late-season awards momentum and boosting premium format (IMAX/Dolby) ticket surcharges.` : `Preliminary algorithmic scans of the creative blueprint suggest a potentially polarizing response among top-tier critics and gatekeepers. The narrative structure might prompt decisive division, lowering the projected Rotten Tomatoes floor to 55-65%. However, audience disparity models signify that general ticket-buyers may overlook critical lukewarmness in favor of pure entertainment value.`);
-    }
-
-    // THE FIX 5: 4TH CARD PROFITABILITY CALCULATOR & SUMMARY STATS
-    let estBudgetStr = movieData.budget;
-    let rawBudgetM = 0;
-    if (!estBudgetStr && movieData.boxOffice) {
-        let val = parseFloat(movieData.boxOffice.replace(/[^0-9.]/g, ''));
-        let inMillions = movieData.boxOffice.includes('B') ? val * 1000 : val;
-        rawBudgetM = Math.round(inMillions / 3);
-        estBudgetStr = rawBudgetM >= 1000 ? `$${(rawBudgetM / 1000).toFixed(2)}B` : `$${rawBudgetM}M`;
-    } else if (estBudgetStr) {
-        let bVal = parseFloat(estBudgetStr.replace(/[^0-9.]/g, ''));
-        rawBudgetM = estBudgetStr.includes('B') ? bVal * 1000 : bVal;
-    } else {
-        estBudgetStr = "$150M";
-        rawBudgetM = 150;
-    }
-
-    let profitTargetStr = movieData.profitTarget;
-    if (!profitTargetStr) {
-        let rawTargetM = Math.round(rawBudgetM * 2.5);
-        profitTargetStr = rawTargetM >= 1000 ? `$${(rawTargetM / 1000).toFixed(2)}B` : `$${rawTargetM}M`;
-    }
-
-    const safeBoxOffice = movieData.boxOffice || 'N/A';
-    const safeImdb = movieData.imdb || 'N/A';
-    const isLoggedIn = localStorage.getItem('cinescore_auth') === 'true';
-
-    const verdictEl = document.getElementById('dyn-verdict');
-    const boxOfficeEl = document.getElementById('dyn-box-office');
-    const imdbEl = document.getElementById('dyn-imdb');
-    const profitTargetEl = document.getElementById('dyn-profit-target');
-    const estBudgetEl = document.getElementById('dyn-est-budget');
-
-    if (isLoggedIn) {
-        if (verdictEl) verdictEl.textContent = movieData.verdict || 'Pending';
-        if (boxOfficeEl) boxOfficeEl.innerHTML = `${safeBoxOffice.replace(/[MB]/g, '')}<span style="font-size: 24px;">${safeBoxOffice === 'N/A' ? '' : safeBoxOffice.slice(-1)}</span>`;
-        if (imdbEl) imdbEl.innerHTML = `${safeImdb}<span style="font-size: 24px; color: var(--color-secondary);">${safeImdb === 'N/A' ? '' : '/10'}</span>`;
-        if (profitTargetEl) profitTargetEl.innerHTML = `${profitTargetStr.replace(/[MB]/g, '')}<span style="font-size: 24px;">${profitTargetStr.slice(-1)}</span>`;
-        if (estBudgetEl) estBudgetEl.textContent = `Est. Budget: ${estBudgetStr}`;
-    }
-
-    // THE FIX 6: META TEXTS INJECTION
-    if (document.getElementById('dyn-verdict-meta')) document.getElementById('dyn-verdict-meta').innerHTML = `<i class="fa-solid fa-arrow-trend-up"></i> ${movieData.verdictMeta || 'High Audience Consensus'}`;
-    if (document.getElementById('dyn-box-office-meta')) document.getElementById('dyn-box-office-meta').innerHTML = `<i class="fa-solid fa-circle-info"></i> ${movieData.boxOfficeMeta || 'Based on theatrical run'}`;
-    if (document.getElementById('dyn-imdb-meta')) document.getElementById('dyn-imdb-meta').innerHTML = `<i class="fa-solid fa-circle-check"></i> ${movieData.imdbMeta || 'Verified User Ratings'}`;
-
-    // THE FIX 7: AI GAUGE UPDATE
-    const gaugeFill = document.querySelector('.ai-gauge-fill');
-    if (gaugeFill) gaugeFill.style.strokeDashoffset = 264 - (264 * ((movieData.aiScore || 85) / 100));
-
-    // Trigger Dynamic Charts
-    if (typeof window.renderDynamicCharts === 'function') window.renderDynamicCharts(movieData, 'base');
-
-    // --- THE RESTORED PAYWALL & BLUR LOGIC ---
+    syncAPIData();
     const chartsWrapper = document.querySelector('.content-slider');
     const paywall = document.getElementById('paywall-overlay');
 
@@ -4218,22 +4818,12 @@ function loadMovieData(movieName, shouldAnimate) {
         chartsWrapper.classList.add('content-blurred');
         paywall.classList.remove('hidden');
         paywall.style.opacity = '1';
-
-        const lockBadge = `<span style="display: flex; align-items: center; font-size: 10px; color: var(--color-warning); border: 1px solid var(--color-warning); padding: 3px 6px; border-radius: 4px; letter-spacing: 1px; font-weight: 800;"><i class="fa-solid fa-lock" style="margin-right: 4px;"></i> PRO</span>`;
-        const blurHTML = (val) => `<div style="display: flex; align-items: center; gap: 8px;"><span style="filter: blur(5px); opacity: 0.5;">${val}</span> ${lockBadge}</div>`;
-
-        if (verdictEl) verdictEl.innerHTML = blurHTML('Restricted');
-        if (boxOfficeEl) boxOfficeEl.innerHTML = blurHTML('$850M');
-        if (imdbEl) imdbEl.innerHTML = blurHTML('8.5');
-        if (profitTargetEl) profitTargetEl.innerHTML = blurHTML('$650M');
     } else if (chartsWrapper && paywall) {
         chartsWrapper.classList.remove('content-blurred');
         paywall.classList.add('hidden');
     }
 
-    if (shouldAnimate) {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
+    if (shouldAnimate) window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 /* ============================================================
@@ -4298,7 +4888,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // THE FIX: Read the actual dynamic state instead of hardcoded 'false'
     const isFreshSignup = localStorage.getItem('cinescore_fresh_signup') === 'true';
-    const userName = localStorage.getItem('cinescore_user_name') || "Director";
+    const fullName = localStorage.getItem('cinescore_user_name') || "Director";
+    const userName = fullName.split(' ')[0];
 
     if (!isUserLoggedIn) {
         // STATE 1: UNLOGGED NAV-LINK LANDING
@@ -4344,80 +4935,192 @@ document.addEventListener("DOMContentLoaded", () => {
 // ==========================================
 // THE UNIVERSAL DAILY ROTATION ENGINE (V2.0)
 // ==========================================
-function initUniversalDailyRotations() {
-    const db = window.mockMovies || [];
-    if (db.length === 0) return;
+async function initUniversalDailyRotations() {
+    let movies = [];
+    try {
+        const upcoming = await window.TMDB_API.getUpcoming();
+        if (upcoming && upcoming.length > 0) {
+            const today = new Date();
+            const tenDaysAgo = new Date(today.getTime() - (10 * 24 * 60 * 60 * 1000));
+            
+            movies = upcoming.filter(m => {
+                const title = (m.title || "").toLowerCase();
+                const releaseDate = m.release_date ? new Date(m.release_date) : null;
+                
+                // STRICT FILTER: Only if unreleased or released within 10 day buffer
+                const isUpcomingOrRecent = releaseDate && releaseDate >= tenDaysAgo;
+                const isNotJunk = !title.includes('tour') && !title.includes('concert') && !title.includes('documentary');
+                
+                return isUpcomingOrRecent && isNotJunk;
+            });
+        }
+    } catch (e) { console.error("Rotations API Fail:", e); }
 
-    const today = new Date().getDate();
+    // DYNAMIC FALLBACK: If TMDB upcoming feed fails, fetch specific major strictly upcoming titles
+    if (movies.length === 0) {
+        console.log("TMDB Rotations empty, fetching specific major strictly unreleased titles.");
+        const fallbackTitles = ["Spider-Man 4", "Superman", "Minecraft Movie", "Jurassic World Rebirth", "Avatar: Fire and Ash"];
+        for (const title of fallbackTitles) {
+            try {
+                const hits = await window.TMDB_API.searchMovies(title);
+                if (hits && hits[0]) {
+                    const releaseDate = hits[0].release_date;
+                    if (releaseDate && new Date(releaseDate) > new Date()) {
+                        movies.push(hits[0]);
+                    }
+                }
+            } catch (err) { console.warn(`Fallback fetch failed for ${title}`); }
+        }
+        if (movies.length === 0) {
+            movies = (window.mockMovies || []).filter(m => m.isTrending).slice(0, 8);
+        }
+    }
 
-    // Helper: Calculates the exact same Hype Score as the Live Ticker
-    const getHype = (title) => 65 + (title.length % 33);
+    if (movies.length === 0) return;
 
-    // 1. BLANK SLATE POSTERS (Now with Hover Overlays!)
+    // THE FIX: Sort by popularity to ensure major hits are shown
+    const sorted = movies.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+
+    // 1. BLANK SLATE POSTERS
     const blankSlateTrack = document.getElementById('blank-slate-trending-track');
     if (blankSlateTrack) {
-        const shift1 = [...db.slice((today + 5) % db.length), ...db.slice(0, (today + 5) % db.length)];
-        blankSlateTrack.innerHTML = shift1.slice(0, 3).map(m => `
-            <div class="poster-card" style="width: 140px; cursor: pointer; border-radius: 8px; overflow: hidden; position: relative; box-shadow: 0 10px 20px rgba(0,0,0,0.5); transition: transform 0.2s;" 
-                 onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'"
-                 onclick="document.getElementById('default-view-search-input').value='${m.title}'; document.getElementById('default-view-search-btn').click();">
-                <img src="${m.poster}" alt="${m.title}" style="width: 100%; height: 100%; object-fit: cover;">
-                
-                <div class="poster-overlay stack" style="align-items: center; justify-content: center; text-align: center; padding: 12px; background: rgba(11, 25, 44, 0.9);">
-                    <h4 style="color: #fff; margin: 0 0 6px 0; font-size: 14px; line-height: 1.2;">${m.title}</h4>
-                    <span style="font-size: 10px; color: var(--color-warning); font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase;">${m.year || '2026'}</span>
-                    <span style="font-size: 10px; color: var(--color-secondary); margin-top: 4px;">${m.studio || 'Blockbuster'}</span>
+        blankSlateTrack.innerHTML = sorted.slice(0, 3).map(m => {
+            const imgUrl = m.poster_path ? `${window.TMDB_API.IMG_URL}${m.poster_path}` : (m.poster || 'https://placehold.co/140x210/111/FFF?text=Poster');
+            const releaseYear = m.release_date ? m.release_date.split('-')[0] : (m.year || '2026');
+            
+            // The JSON.stringify needs to be safe for HTML attributes
+            const activeDataStr = JSON.stringify({
+                title: m.title,
+                poster: imgUrl,
+                year: releaseYear,
+                release_date: m.release_date,
+                synopsis: m.overview || m.synopsis || '',
+                id: m.id || 0,
+                genres: m.genre_ids ? m.genre_ids.map(id => GENRE_MAP[id]).filter(Boolean) : (m.genres || [])
+            }).replace(/'/g, "&apos;").replace(/"/g, "&quot;");
+
+            const isLocked = m.release_date ? new Date(m.release_date) < new Date(new Date().getTime() - (10 * 24 * 60 * 60 * 1000)) : false;
+
+            const genreList = Array.isArray(m.genres) ? m.genres.slice(0, 2).join('/') : (m.genre_ids ? m.genre_ids.slice(0,2).map(id=>GENRE_MAP[id]).filter(Boolean).join('/') : 'Action');
+            
+            let displayDate = 'Expected 2026';
+            if (m.release_date) {
+                const d = new Date(m.release_date);
+                displayDate = `Expected ${d.toLocaleString('default', { month: 'short' })} ${d.getFullYear()}`;
+            } else if (m.year) {
+                displayDate = `Expected ${m.year}`;
+            }
+
+            return `
+                <div class="poster-card" style="width: 140px; cursor: pointer; border-radius: 8px; overflow: hidden; position: relative; box-shadow: 0 10px 20px rgba(0,0,0,0.5); transition: transform 0.2s;" 
+                     onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'"
+                     onclick='if (${isLocked}) { window.showCustomAlert("error", "Prediction Locked", "This movie is already released."); return; } if (typeof window.executePredictionBridge === "function") window.executePredictionBridge("${m.title.replace(/'/g, "\\'")}");'>
+                    <img src="${imgUrl}" alt="${m.title}" style="width: 100%; height: 100%; object-fit: cover;">
+                    ${isLocked ? '<div style="position:absolute; top:8px; right:8px; background:rgba(244,63,94,0.9); color:#fff; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:800;"><i class="fa-solid fa-lock"></i></div>' : ''}
+                    <div class="poster-overlay stack" style="align-items: center; justify-content: center; text-align: center; padding: 12px; background: rgba(11, 25, 44, 0.9);">
+                        <h4 style="color: #fff; margin: 0 0 6px 0; font-size: 14px; line-height: 1.2;">${m.title}</h4>
+                        <span style="font-size: 10px; color: var(--color-warning); font-weight: 800; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 2px;">${displayDate}</span>
+                        <span style="font-size: 9px; color: var(--color-tertiary); font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase;">${genreList}</span>
+                    </div>
                 </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
     }
 
-    // 2. DASHBOARD TRENDING GRID (Unchanged)
     const trendingGrid = document.getElementById('trending-grid');
     if (trendingGrid) {
-        const shift2 = [...db.slice((today + 10) % db.length), ...db.slice(0, (today + 10) % db.length)];
-        trendingGrid.innerHTML = shift2.slice(0, 4).map(m => `
-            <div class="poster-card" style="cursor: pointer;" onclick="triggerPredictionState('${m.title}')">
-                <img src="${m.poster}" alt="${m.title}">
-                <div class="poster-overlay" style="align-items: center; justify-content: center; text-align: center;">
-                    <span style="font-size: 11px; color: var(--color-warning); font-weight: 800; text-transform: uppercase; margin-bottom: 8px;">Trending Now</span>
-                    <h4 style="color: #fff; margin: 0 0 16px 0; font-size: 18px;">${m.title}</h4>
-                    <button class="hero-btn" style="padding: 10px 20px; font-size: 13px; color: #fff !important;">Predict Now <i class="fa-solid fa-bolt" style="margin-left: 6px;"></i></button>
+        trendingGrid.innerHTML = sorted.slice(3, 7).map(m => {
+            const imgUrl = m.poster_path ? `${window.TMDB_API.IMG_URL}${m.poster_path}` : (m.poster || 'https://placehold.co/200x300/111/FFF?text=Poster');
+            const releaseYear = m.release_date ? m.release_date.split('-')[0] : (m.year || '2026');
+            return `
+                <div class="poster-card" style="cursor: pointer;" onclick="const activeData = {title: '${m.title.replace(/'/g, "\\'")}', poster: '${imgUrl}', year: '${releaseYear}', synopsis: '${(m.overview || m.synopsis || '').replace(/'/g, "\\'")}', id: ${m.id || 0}}; localStorage.setItem('cinescore_active_movie_data', JSON.stringify(activeData)); triggerPredictionState('${m.title.replace(/'/g, "\\'")}');">
+                    <img src="${imgUrl}" alt="${m.title}">
+                    <div class="poster-overlay" style="align-items: center; justify-content: center; text-align: center;">
+                        <span style="font-size: 11px; color: var(--color-warning); font-weight: 800; text-transform: uppercase; margin-bottom: 8px;">Trending Now</span>
+                        <h4 style="color: #fff; margin: 0 0 16px 0; font-size: 18px;">${m.title}</h4>
+                        <button class="hero-btn" style="padding: 10px 20px; font-size: 13px; color: #fff !important;">Predict Now <i class="fa-solid fa-bolt" style="margin-left: 6px;"></i></button>
+                    </div>
                 </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
     }
 
-    // 3. HOME SCREEN FEATURED CARDS (Sorted by Highest Hype!)
+    // 3. HOME SCREEN FEATURED CARDS (Strict Ranking + Meta)
     const featuredCards = document.querySelectorAll('.featured-movie-card');
     if (featuredCards.length > 0) {
-        // Map the DB to include Hype, then sort it descending (Highest Hype First)
-        let sortedDb = [...db].map(m => ({ ...m, hype: getHype(m.title) })).sort((a, b) => b.hype - a.hype);
-
-        // Grab the absolute Top 3 movies in the database
-        const topMovies = sortedDb.slice(0, 3);
+        // Use sorted list and SORT DESCENDING for 1, 2, 3 ranking feel
+        const scoredMovies = sorted.slice(0, 3).map(m => ({
+            ...m,
+            score: 88 + (m.title.length % 11) // Generates 88-98%
+        })).sort((a, b) => b.score - a.score);
 
         featuredCards.forEach((card, i) => {
-            const m = topMovies[i];
+            const m = scoredMovies[i];
             if (m) {
-                // Update Image and Title
                 const img = card.querySelector('img');
                 const title = card.querySelector('.movie-title-featured') || card.querySelector('h3');
-                if (img) img.src = m.poster;
+                const studioEl = card.querySelector('.movie-studio-featured') || card.querySelector('p');
+                const genresContainer = card.querySelector('.movie-genres-featured') || card.querySelector('.stack.row');
+                
+                // METADATA SYNC (Release Date + Genres)
+                const finalPoster = m.poster_path ? `${window.TMDB_API.IMG_URL}${m.poster_path}` : (m.poster || 'https://placehold.co/400x600/111/FFF?text=Film');
+                if (img) img.src = finalPoster;
                 if (title) title.textContent = m.title;
-
-                // THE FIX: Find any element containing '%' and update it with real math
-                const percentageEl = Array.from(card.querySelectorAll('*')).find(el => el.textContent.includes('%') && el.children.length === 0);
-                if (percentageEl) {
-                    percentageEl.textContent = m.hype + '%';
+                
+                // Use Release Date instead of Studio for high-fidelity upcoming info
+                if (studioEl) {
+                    const date = m.release_date ? new Date(m.release_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : (m.year || '2026');
+                    studioEl.textContent = `Release: ${date}`;
                 }
+
+                // GENRE SYNC
+                if (genresContainer) {
+                    const genreList = (m.genre_ids && m.genre_ids.length > 0) 
+                        ? m.genre_ids.slice(0, 2).map(id => GENRE_MAP[id] || 'Cinema') 
+                        : (m.genres ? (Array.isArray(m.genres) ? m.genres.slice(0,2) : m.genres.split('/')) : ['Cinema', 'Theatrical']);
+                    
+                    genresContainer.innerHTML = genreList.map(g => `
+                        <span class="genre-tag" style="font-size: 10px; padding: 4px 10px; border: 1px solid rgba(255,255,255,0.1); border-radius: 20px; text-transform: uppercase; font-weight: 700; letter-spacing: 1px; color: var(--color-secondary); background: rgba(255,255,255,0.03);">${g.trim()}</span>
+                    `).join('');
+                }
+                
+                const percentageEl = Array.from(card.querySelectorAll('*')).find(el => el.textContent.includes('%') && el.children.length === 0);
+                if (percentageEl) percentageEl.textContent = m.score + '%';
+
+                card.onclick = () => {
+                   const genreList = (m.genre_ids && m.genre_ids.length > 0) 
+                        ? m.genre_ids.map(id => GENRE_MAP[id] || 'Cinema') 
+                        : (m.genres ? (Array.isArray(m.genres) ? m.genres : m.genres.split('/')) : ['Cinema', 'Blockbuster']);
+                   
+                   const activeData = {
+                       title: m.title, 
+                       poster: finalPoster, 
+                       year: m.release_date ? m.release_date.split('-')[0] : (m.year || '2026'), 
+                       synopsis: m.overview || m.synopsis || '', 
+                       id: m.id || 0,
+                       director: m.director || 'TBA',
+                       cast: m.cast || 'TBA',
+                       studio: m.studio || 'TBA',
+                       aiScore: m.aiScore || m.score || 92,
+                       sentimentScore: m.sentimentScore || '8.5',
+                       genres: genreList
+                   };
+                   localStorage.setItem('cinescore_active_movie_data', JSON.stringify(activeData));
+                   triggerPredictionState(m.title);
+                };
             }
         });
     }
 }
 
 // Fire the engine on load!
-document.addEventListener("DOMContentLoaded", initUniversalDailyRotations);
+document.addEventListener("DOMContentLoaded", () => {
+    initUniversalDailyRotations();
+    // THE FIX: Ensure Hype Meter is explicitly fired on load
+    if (typeof initLiveHypeMeter === 'function') {
+        initLiveHypeMeter();
+    }
+});
 
 // ============================================================
 // PHASE 4.5: THE NEURAL SANDBOX (Threshold Physics V2.0)
@@ -4541,9 +5244,6 @@ function initSliderMathEngine() {
 }
 
 // ============================================================
-// PHASE 4.6: SHOWDOWN SEARCH ENGINE
-// ============================================================
-// ============================================================
 // PHASE 4.6: SHOWDOWN SEARCH ENGINE (UPGRADED)
 // ============================================================
 function initShowdownSearch() {
@@ -4556,94 +5256,173 @@ function initShowdownSearch() {
         attachKeyboardNav(input, resultsBox);
     }
 
+    const performShowdownSearch = async (query) => {
+        const activeMovieStr = localStorage.getItem('cinescore_active_movie_data');
+        const activeTitle = activeMovieStr ? JSON.parse(activeMovieStr).title : '';
+        const today = new Date();
+
+        let tmdbMatches = [];
+        try {
+            const tmdbRes = await window.TMDB_API.searchMovies(query);
+            if (tmdbRes) {
+                tmdbMatches = tmdbRes.filter(m => {
+                    if (m.title.toLowerCase() === activeTitle.toLowerCase()) return false;
+                    return !!m.release_date;
+                });
+            }
+        } catch(e) {}
+
+        const mockMatches = (window.mockMovies || []).filter(m => 
+            m.title.toLowerCase().includes(query.toLowerCase()) && 
+            m.title.toLowerCase() !== activeTitle.toLowerCase()
+        );
+
+        const combined = [...mockMatches];
+        tmdbMatches.forEach(t => {
+            if (!combined.some(c => c.title.toLowerCase() === t.title.toLowerCase())) combined.push(t);
+        });
+
+        // Stale Data Check
+        if (input.value.trim().toLowerCase() !== query.toLowerCase()) return;
+
+        if (combined.length > 0) {
+             resultsBox.innerHTML = combined.slice(0, 5).map(m => {
+                const year = m.release_date ? m.release_date.split('-')[0] : (m.year || 'TBA');
+                const genresArr = m.genre_ids ? m.genre_ids.map(id => GENRE_MAP[id]).filter(Boolean) : (Array.isArray(m.genres) ? m.genres : (m.genres ? m.genres.split(/[\/,]/).map(g=>g.trim()) : []));
+                const genresStr = genresArr.length > 0 ? genresArr.slice(0,2).join(' / ') : 'Action';
+                const img = m.poster_path ? `${window.TMDB_API.IMG_URL}${m.poster_path}` : (m.poster || 'https://placehold.co/100x150?text=Poster');
+                
+                return `
+                <li class="search-item" style="display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left;" onclick="selectShowdownOpponent('${m.title.replace(/'/g, "\\'")}', '${img}', '${year}', ${!!m.release_date})">
+                    <img src="${img}" style="width: 32px; height: 48px; border-radius: 4px; object-fit: cover;">
+                    <div style="flex: 1;">
+                        <strong style="font-size: 13px;">${m.title}</strong><br>
+                        <small style="font-size: 10px; color: var(--color-secondary); opacity: 0.8;">${year} &nbsp;·&nbsp; ${genresStr}</small>
+                    </div>
+                    <i class="fa-solid fa-hand-fist search-right-icon" style="font-size:18px;opacity:0.35;flex-shrink:0;margin-left:10px;color:var(--color-accent);"></i>
+                </li>
+                `;
+             }).join('');
+             resultsBox.style.display = 'block';
+        } else {
+            resultsBox.innerHTML = '<li class="search-item" style="text-align:center; opacity:0.5;">No Valid Opponents</li>';
+            resultsBox.style.display = 'block';
+        }
+    };
+
+    const showdownClearBtn = document.getElementById('showdown-search-clear');
+    if (showdownClearBtn) {
+        showdownClearBtn.addEventListener('click', () => {
+            input.value = '';
+            showdownClearBtn.style.display = 'none';
+            resultsBox.style.display = 'none';
+            input.focus();
+        });
+    }
+
+    let showdownSearchTimeout;
     input.addEventListener('input', (e) => {
-        const query = e.target.value.toLowerCase().trim();
-        if (query.length < 1) {
+        const val = e.target.value.trim();
+        const query = val.toLowerCase();
+        clearTimeout(showdownSearchTimeout);
+
+        if (showdownClearBtn) showdownClearBtn.style.display = val.length > 0 ? 'block' : 'none';
+
+        if (val.length === 1) {
+            resultsBox.innerHTML = '<li style="padding:16px;text-align:center;font-size:12px;opacity:0.6;color:var(--color-secondary);">Type at least 2 characters to search...</li>';
+            resultsBox.style.display = 'block';
+            return;
+        }
+        if (val.length < 1) {
             resultsBox.style.display = 'none';
             return;
         }
 
-        const db = window.mockMovies || [];
-        const matches = db.filter(m => m.title.toLowerCase().includes(query));
+        // 1. Instant UI Feedback (Zero Latency)
+        resultsBox.innerHTML = `<li class="search-item" style="pointer-events: none; opacity: 0.8; text-align: center;"><i class="fa-solid fa-circle-notch fa-spin"></i> Finding Opponent...</li>`;
+        resultsBox.style.display = 'block';
 
-        if (matches.length > 0) {
-            // THE FIX: Render as <li> using the 'search-item' class so hover borders work!
-            resultsBox.innerHTML = matches.map(m => `
-                <li class="search-item" style="display: flex; align-items: center; gap: 12px; cursor: pointer; text-align: left;" onclick="selectShowdownOpponent('${m.title}')">
-                    <div style="display: flex; align-items: center; gap: 12px; flex: 1; overflow: hidden;">
-                        <img src="${m.poster}" style="width: 32px; height: 48px; border-radius: 4px; object-fit: cover; flex-shrink: 0;">
-                        <div style="min-width: 0;">
-                            <strong style="color: var(--color-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;">${m.title}</strong>
-                            <span style="font-size: 11px; display: block; color: var(--color-secondary);">${m.year || 'Upcoming'} • ${m.boxOffice || m.userPrediction || 'TBD'}</span>
-                        </div>
-                    </div>
-                    <i class="fa-solid fa-magnifying-glass-arrow-right search-right-icon" style="margin-left: 12px; flex-shrink: 0;"></i>
-                </li>
-            `).join('');
-            resultsBox.style.display = 'block';
+        // 2. Debounced Search Call
+        showdownSearchTimeout = setTimeout(async () => {
+            // 3. Prevent Race Conditions (Stale Data Check)
+            if (input.value.trim().toLowerCase() !== query) return;
+
+            performShowdownSearch(query);
+        }, 400);
+    });
+
+    // --- THE SHOWDOWN ARENA HYDRATOR ---
+    window.updateShowdownOpponent = function (slot, dataOrTitle, poster, year) {
+        const isObject = typeof dataOrTitle === 'object';
+        const title = isObject ? dataOrTitle.title : dataOrTitle;
+        const img = isObject ? (dataOrTitle.poster || poster) : poster;
+
+        const prefix = `showdown-`;
+        const posterEl = document.getElementById(`${prefix}poster-${slot}`);
+        const nameEl = document.getElementById(`${prefix}name-${slot}`);
+
+        if (posterEl) {
+            posterEl.style.transition = 'all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
+            posterEl.style.opacity = '0';
+            setTimeout(() => {
+                posterEl.src = img || 'https://placehold.co/400x600/333/FFF?text=No+Poster';
+                posterEl.style.opacity = '1';
+            }, 300);
+        }
+
+        if (nameEl) {
+            nameEl.style.opacity = '0';
+            setTimeout(() => {
+                nameEl.textContent = title;
+                nameEl.style.opacity = '1';
+            }, 300);
+        }
+
+        // --- METRIC HANDSHAKE ---
+        const metrics = {
+            total: isObject ? (dataOrTitle.totalRun || 500) : 0,
+            opening: isObject ? (dataOrTitle.openingWknd || 100) : 0,
+            sentiment: isObject ? (dataOrTitle.sentiment || 85) : 0,
+            hype: isObject ? (dataOrTitle.momentum || 8.5) : 0
+        };
+
+        if (!isObject || !dataOrTitle.isReleased) {
+            const seed = title.length;
+            metrics.total = 200 + (seed * 25) + (Math.random() * 100);
+            metrics.opening = metrics.total * 0.22;
+            metrics.sentiment = 75 + (seed % 15);
+            metrics.hype = 7.0 + (seed % 20) / 10;
         } else {
-            resultsBox.innerHTML = `<li class="search-item" style="pointer-events: none; opacity: 0.5; text-align: center;">No opponent found.</li>`;
-            resultsBox.style.display = 'block';
+            // RELEASED MOVIE: Data should come from reliable source (TMDB/Web)
+            // For now, since we don't have a 2nd API call here, we simulate "reliable" public data
+            const seed = title.length;
+            metrics.total = 400 + (seed * 30); 
+            metrics.opening = metrics.total * 0.15;
+            metrics.sentiment = 80 + (seed % 10);
+            metrics.hype = 8.0 + (seed % 10) / 10;
         }
-    });
 
-    // THE FIX: Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-        if (e.target !== input && !resultsBox.contains(e.target)) {
-            resultsBox.style.display = 'none';
+        const totalEl = document.getElementById(`sd-total-${slot}`);
+        const openEl = document.getElementById(`sd-open-${slot}`);
+        const sentEl = document.getElementById(`sd-sent-${slot}`);
+        const hypeEl = document.getElementById(`sd-hype-${slot}`);
+
+        if (totalEl) totalEl.textContent = `$${Math.round(metrics.total)}M`;
+        if (openEl) openEl.textContent = `$${Math.round(metrics.opening)}M`;
+        if (sentEl) sentEl.textContent = `${Math.round(metrics.sentiment)}%`;
+        if (hypeEl) hypeEl.textContent = metrics.hype.toFixed(1);
+
+        if (slot === 2) {
+            const input = document.getElementById('opponent-search-input');
+            if (input) input.value = title;
         }
-    });
+    };
 
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && resultsBox) resultsBox.style.display = 'none';
-    });
-
-    // 3. UPDATED SHOWDOWN SELECTION (With Spring Animation)
-    window.selectShowdownOpponent = function (title) {
-        const movie = (window.mockMovies || []).find(m => m.title === title);
-        if (movie) {
-            const show2 = document.getElementById('showdown-poster-2');
-            const name2 = document.getElementById('showdown-name-2');
-            const metricsGrid = document.getElementById('showdown-metrics-grid');
-
-            if (show2) {
-                // STEP 1: Fast shrink and fade out the placeholder
-                show2.style.transition = 'all 0.2s ease-in';
-                show2.style.opacity = '0';
-                show2.style.transform = 'scale(0.9)'; // Shrinks down
-
-                // Fade out the text temporarily
-                if (name2) { name2.style.transition = 'opacity 0.2s ease'; name2.style.opacity = '0'; }
-                if (metricsGrid) { metricsGrid.style.transition = 'opacity 0.2s ease'; metricsGrid.style.opacity = '0'; }
-
-                // STEP 2: Swap the data in the dark, then Spring it back up!
-                setTimeout(() => {
-                    show2.src = movie.poster;
-                    if (name2) name2.textContent = movie.title;
-
-                    // Metric Updates
-                    document.getElementById('sd-total-2').textContent = movie.boxOffice || movie.userPrediction || '$500M';
-                    document.getElementById('sd-open-2').textContent = '$' + (Math.round(parseInt(movie.boxOffice?.replace(/\D/g, '') || 500) / 6)) + 'M';
-                    document.getElementById('sd-sent-2').textContent = (75 + (movie.title.length % 20)) + '%';
-                    document.getElementById('sd-hype-2').textContent = (7 + (movie.title.length % 30) / 10).toFixed(1);
-
-                    // The Cinematic Spring Animation (Apple/Netflix style bounce)
-                    show2.style.transition = 'all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)';
-                    show2.style.opacity = '1';
-                    show2.style.filter = 'grayscale(0%)';
-                    show2.style.transform = 'scale(1)'; // Bounces back to full size
-                    show2.style.boxShadow = '0 10px 25px rgba(0,0,0,0.5)'; // Locks in the premium shadow
-
-                    if (name2) name2.style.opacity = '1';
-                    if (metricsGrid) metricsGrid.style.opacity = '1';
-
-                }, 250); // 250ms delay allows the fade-out to finish before swapping
-            }
-
-            document.getElementById('opponent-search-dropdown').style.display = 'none';
-            document.getElementById('opponent-search-input').value = '';
-        }
-    }
+    window.selectShowdownOpponent = function (title, poster, year, isReleased) {
+        window.updateShowdownOpponent(2, {title, poster, year, isReleased});
+        const dropdown = document.getElementById('opponent-search-dropdown');
+        if (dropdown) dropdown.style.display = 'none';
+    };
 }
 
 // Add to your Master Initializer!

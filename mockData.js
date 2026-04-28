@@ -5,7 +5,7 @@
 window.mockMovies = [
     {
         title: "The Super Mario Galaxy Movie",
-        isTrending: true,
+        isTrending: true, genres: ["Animation","Family","Comedy","Adventure"],
         year: "2026", director: "Aaron Horvath, Michael Jelenic", cast: "Chris Pratt, Anya Taylor-Joy, Jack Black", studio: "Illumination / Nintendo",
         poster: "https://www.movieposters.com/cdn/shop/files/super_mario_galaxy_movie_ver12.jpg?v=1774021772&width=1680",
         aiScore: 94, sentimentScore: "9.1", verdict: "Billion Dollar Club", boxOffice: "$1.3B", imdb: "8.0",
@@ -15,7 +15,7 @@ window.mockMovies = [
 
     {
         title: "Avengers: Doomsday",
-        isTrending: true,
+        isTrending: true, genres: ["Action","Sci-Fi","Adventure"],
         year: "2026", director: "Anthony & Joe Russo", cast: "Robert Downey Jr., Pedro Pascal, Vanessa Kirby", studio: "Marvel Studios",
         poster: "https://cdn.cinematerial.com/p/297x/pgbnnfwm/avengers-doomsday-movie-poster-md.jpg?v=1766554742",
         aiScore: 98, dataPoints: "4.5", sentimentScore: "9.4", verdict: "Mega-Hit", boxOffice: "$1.8B", imdb: "8.8",
@@ -24,7 +24,7 @@ window.mockMovies = [
     },
     {
         title: "The Mandalorian and Grogu",
-        isTrending: false,
+        isTrending: false, genres: ["Sci-Fi","Action","Adventure","Family"],
         year: "2026", director: "Jon Favreau", cast: "Pedro Pascal, Sigourney Weaver", studio: "Lucasfilm",
         poster: "https://www.movieposters.com/cdn/shop/files/star-wars-the-mandalorian-and-grogu_ylbbjy4z.jpg?v=1772724721&width=1680",
         aiScore: 88, sentimentScore: "8.6", verdict: "Blockbuster", boxOffice: "$920M", imdb: "8.1",
@@ -32,9 +32,9 @@ window.mockMovies = [
         social: [40, 25, 25, 10], sentimentLine: { pos: [50, 60, 75, 80, 88], neg: [15, 20, 15, 12, 10] }, sonar: [90, 75, 95, 85, 80], funnel: [160, 80, 240, 920], trajectory: [150, 350, 550, 750, 850, 920]
     },
     {
-        title: "Supergirl: Woman of Tomorrow",
-        isTrending: false,
-        year: "2026", director: "Craig Gillespie", cast: "Milly Alcock, Matthias Schoenaerts", studio: "DC Studios",
+        title: "Supergirl",
+        isTrending: false, genres: ["Action","Sci-Fi","Adventure"],
+        year: "2026", director: "Craig Gillespie", cast: "Milly Alcock, Jason Momoa, Matthias Schoenaerts", studio: "DC Studios",
         poster: "https://www.movieposters.com/cdn/shop/files/supergirl_gnafvyfz.jpg?v=1768848650&width=1680",
         aiScore: 78, dataPoints: "1.5", sentimentScore: "7.9", verdict: "Moderate Hit", boxOffice: "$540M", imdb: "7.5",
         verdictMeta: "Dependent on Universe Setup", boxOfficeMeta: "+/- 15% margin of error", imdbMeta: "Cautiously Optimistic",
@@ -42,8 +42,7 @@ window.mockMovies = [
     },
     {
         title: "Toy Story 5",
-        isTrending: false,
-        isTrending: true,
+        isTrending: true, genres: ["Animation","Family","Comedy","Adventure"],
         year: "2026", director: "Andrew Stanton", cast: "Tom Hanks, Tim Allen", studio: "Pixar",
         poster: "https://www.movieposters.com/cdn/shop/files/toy-story-5_ueha7qwg.jpg?v=1772724247&width=1680",
         aiScore: 91, sentimentScore: "8.7", verdict: "Billion Dollar Club", boxOffice: "$1.1B", imdb: "8.2",
@@ -52,7 +51,7 @@ window.mockMovies = [
     },
     {
         title: "Disclosure Day",
-        isTrending: true,
+        isTrending: true, genres: ["Sci-Fi","Thriller","Drama"],
         year: "2026", director: "Steven Spielberg", cast: "Emily Blunt, Colin Firth, Colman Domingo", studio: "Universal Pictures",
         poster: "https://www.movieposters.com/cdn/shop/files/disclosure_day_05bc9f2f-350d-41ee-908d-95cba153c689.jpg?v=1767640278&width=1680",
         aiScore: 89, dataPoints: "2.1", sentimentScore: "8.5", verdict: "Blockbuster", boxOffice: "$780M", imdb: "8.4",
@@ -61,7 +60,7 @@ window.mockMovies = [
     },
     {
         title: "Shrek 5",
-        isTrending: false,
+        isTrending: false, genres: ["Animation","Comedy","Family","Fantasy"],
         year: "2027", director: "Walt Dohrn", cast: "Mike Myers, Eddie Murphy, Cameron Diaz", studio: "DreamWorks",
         poster: "https://cdn.cinematerial.com/p/297x/kg5u6z3d/shrek-5-movie-poster-md.jpg?v=1740806414",
         aiScore: 96, sentimentScore: "9.2", verdict: "Billion Dollar Club", boxOffice: "$1.4B", imdb: "8.3",
@@ -70,7 +69,7 @@ window.mockMovies = [
     },
     {
         title: "Spider-Man: Brand New Day",
-        isTrending: true,
+        isTrending: true, genres: ["Action","Sci-Fi","Adventure"],
         year: "2026", director: "Destin Daniel Cretton", cast: "Tom Holland, Zendaya", studio: "Sony / Marvel",
         poster: "https://images.thedirect.com/media/photos/bnd2.png",
         aiScore: 95, dataPoints: "4.5", sentimentScore: "9.0", verdict: "Mega-Hit", boxOffice: "$1.5B", imdb: "8.6",
@@ -79,7 +78,7 @@ window.mockMovies = [
     },
     {
         title: "The Batman: Part II",
-        isTrending: true,
+        isTrending: true, genres: ["Action","Crime","Mystery","Thriller"],
         year: "2026", director: "Matt Reeves", cast: "Robert Pattinson, Zoë Kravitz, Barry Keoghan", studio: "Warner Bros.",
         poster: "https://www.movieposters.com/cdn/shop/products/the-batman_hyktligc.jpg?v=1762969722&width=1680",
         aiScore: 94, dataPoints: "3.6", sentimentScore: "8.7", verdict: "Blockbuster", boxOffice: "$847M", imdb: "8.4",
@@ -88,7 +87,7 @@ window.mockMovies = [
     },
     {
         title: "Dune: Part Three",
-        isTrending: true,
+        isTrending: true, genres: ["Sci-Fi","Action","Adventure","Drama"],
         year: "2026", director: "Denis Villeneuve", cast: "Timothée Chalamet, Zendaya, Florence Pugh", studio: "Warner Bros.",
         poster: "https://cdn.cinematerial.com/p/297x/bw5f0vwv/dune-part-three-movie-poster-md.jpg?v=1775526461",
         aiScore: 97, dataPoints: "3.8", sentimentScore: "9.3", verdict: "Cinematic Event", boxOffice: "$950M", imdb: "8.9",
@@ -97,7 +96,7 @@ window.mockMovies = [
     },
     {
         title: "Project Hail Mary",
-        isTrending: true,
+        isTrending: true, genres: ["Sci-Fi","Drama","Adventure"],
         year: "2026", director: "Phil Lord, Christopher Miller", cast: "Ryan Gosling, Sandra Hüller", studio: "Amazon MGM",
         poster: "https://www.movieposters.com/cdn/shop/files/project-hail-mary_kwovprbc_e690f82c-e70d-4189-a438-c4339ce42643.jpg?v=1753215685&width=1680",
         aiScore: 86, sentimentScore: "8.8", verdict: "Sleeper Hit", boxOffice: "$480M", imdb: "8.5",
@@ -107,7 +106,7 @@ window.mockMovies = [
 
     {
         title: "Five Nights at Freddy's 2",
-        isTrending: false,
+        isTrending: false, genres: ["Horror","Mystery","Thriller"],
         year: "2026", director: "Emma Tammi", cast: "Josh Hutcherson, Matthew Lillard", studio: "Blumhouse",
         poster: "https://www.movieposters.com/cdn/shop/files/scan_7005f255-1934-457a-b05d-5d00ec0a92fc.jpg?v=1763741880&width=1680",
         aiScore: 85, sentimentScore: "8.1", verdict: "High ROI Horror", boxOffice: "$310M", imdb: "6.5",
@@ -116,7 +115,7 @@ window.mockMovies = [
     },
     {
         title: "The Hunger Games: Sunrise on the Reaping",
-        isTrending: false,
+        isTrending: false, genres: ["Action","Drama","Adventure"],
         year: "2026", director: "Francis Lawrence", cast: "TBA", studio: "Lionsgate",
         poster: "https://www.movieposters.com/cdn/shop/files/the-hunger-games-sunrise-on-the-reaping_vjnrleqd.jpg?v=1766422772&width=1680",
         aiScore: 81, sentimentScore: "7.8", verdict: "Solid Performer", boxOffice: "$420M", imdb: "7.3",
@@ -125,7 +124,7 @@ window.mockMovies = [
     },
     {
         title: "Mortal Kombat 2",
-        isTrending: false,
+        isTrending: false, genres: ["Action","Fantasy","Adventure"],
         year: "2026", director: "Simon McQuoid", cast: "Karl Urban, Lewis Tan", studio: "New Line Cinema",
         poster: "https://www.movieposters.com/cdn/shop/files/mortal-kombat-ii_b3ocwgkr.jpg?v=1774898759&width=1680",
         aiScore: 72, sentimentScore: "7.1", verdict: "Niche Hit", boxOffice: "$180M", imdb: "6.2",
@@ -134,7 +133,7 @@ window.mockMovies = [
     },
     {
         title: "28 Years Later: The Bone Temple",
-        isTrending: false,
+        isTrending: false, genres: ["Horror","Thriller","Drama"],
         year: "2026", director: "Nia DaCosta", cast: "Aaron Taylor-Johnson, Jodie Comer", studio: "Sony Pictures",
         poster: "https://www.movieposters.com/cdn/shop/files/28-years-later-the-bone-temple_hd5ivpcp_d8e06295-1c24-4ded-b935-2a794d837760.jpg?v=1760538769&width=1680",
         aiScore: 84, sentimentScore: "8.3", verdict: "Horror Standout", boxOffice: "$220M", imdb: "7.6",
@@ -143,7 +142,7 @@ window.mockMovies = [
     },
     {
         title: "The Devil Wears Prada 2",
-        isTrending: true,
+        isTrending: true, genres: ["Comedy","Drama","Romance"],
         year: "2026", director: "David Frankel", cast: "Meryl Streep, Anne Hathaway, Emily Blunt", studio: "Disney",
         poster: "https://www.movieposters.com/cdn/shop/files/the-devil-wears-prada-2_294gh4cp_bd513ad0-b880-4217-b85a-c0256710e4c1.jpg?v=1774900740&width=1680",
         aiScore: 88, sentimentScore: "8.9", verdict: "Pop Culture Event", boxOffice: "$450M", imdb: "7.4",
@@ -152,7 +151,7 @@ window.mockMovies = [
     },
     {
         title: "Ready or Not 2: Here I Come",
-        isTrending: false,
+        isTrending: false, genres: ["Horror","Comedy","Mystery","Thriller"],
         year: "2026", director: "Matt Bettinelli-Olpin", cast: "Samara Weaving", studio: "Searchlight",
         poster: "https://www.movieposters.com/cdn/shop/files/ready-or-not-2-here-i-come_wcsh0yxx_856d44c4-7a70-40eb-bf93-da3485b90ee4.jpg?v=1766423324&width=1680",
         aiScore: 79, sentimentScore: "8.0", verdict: "Profitable Cult Hit", boxOffice: "$120M", imdb: "7.2",
@@ -161,7 +160,7 @@ window.mockMovies = [
     },
     {
         title: "Minions & Monsters",
-        isTrending: false,
+        isTrending: false, genres: ["Animation","Comedy","Family"],
         year: "2026", director: "Kyle Balda", cast: "Steve Carell, Pierre Coffin", studio: "Illumination",
         poster: "https://www.movieposters.com/cdn/shop/files/minions_three.jpg?v=1771616708&width=1680",
         aiScore: 87, sentimentScore: "8.2", verdict: "Blockbuster", boxOffice: "$980M", imdb: "6.8",
@@ -170,7 +169,7 @@ window.mockMovies = [
     },
     {
         title: "Cliffhanger",
-        isTrending: false,
+        isTrending: false, genres: ["Action","Adventure","Thriller"],
         year: "2026", director: "Jaume Collet-Serra", cast: "Lily James, Pierce Brosnan", studio: "Rocket Science",
         poster: "https://cdn.cinematerial.com/p/297x/5sxu9ehw/cliffhanger-movie-poster-md.jpg?v=1765438025",
         aiScore: 68, sentimentScore: "6.5", verdict: "Mediocre", boxOffice: "$110M", imdb: "6.0",
@@ -179,8 +178,8 @@ window.mockMovies = [
     },
     {
         title: "Werwulf",
-        isTrending: true,
-        year: "2026", director: "Robert Eggers", cast: "TBA", studio: "A24",
+        isTrending: true, genres: ["Horror","Drama","Mystery"],
+        year: "2026", director: "Robert Eggers", cast: "Aaron Taylor-Johnson, Lily-Rose Depp, Willem Dafoe", studio: "A24",
         poster: "https://cdn.cinematerial.com/p/297x/vqekivcc/werwulf-poster-md.jpg?v=1761759972    ",
         aiScore: 85, sentimentScore: "8.6", verdict: "Arthouse Success", boxOffice: "$65M", imdb: "8.1",
         verdictMeta: "Cinephile Domination", boxOfficeMeta: "+/- 15% margin of error", imdbMeta: "Masterpiece Horror",
@@ -188,7 +187,7 @@ window.mockMovies = [
     },
     {
         title: "Jumanji : 3",
-        isTrending: false,
+        isTrending: false, genres: ["Action","Comedy","Adventure","Fantasy"],
         year: "2026", director: "Jake Kasdan", cast: "Dwayne Johnson, Kevin Hart", studio: "Sony Pictures",
         poster: "https://www.movieposters.com/cdn/shop/products/jumanji_the_next_level_xlg.jpg?v=1762966135&width=1680",
         aiScore: 83, sentimentScore: "8.0", verdict: "Strong Hit", boxOffice: "$720M", imdb: "6.9",
@@ -197,7 +196,7 @@ window.mockMovies = [
     },
     {
         title: "Godzilla x Kong Supernova",
-        isTrending: false,
+        isTrending: false, genres: ["Action","Sci-Fi","Adventure"],
         year: "2026", director: "Adam Wingard", cast: "Rebecca Hall, Brian Tyree Henry", studio: "Legendary",
         poster: "https://cdn.cinematerial.com/p/136x/rkyxbu1j/godzilla-x-kong-supernova-movie-poster-sm.jpg?v=1746806719",
         aiScore: 81, sentimentScore: "7.7", verdict: "International Carry", boxOffice: "$550M", imdb: "6.4",
@@ -214,7 +213,7 @@ window.mockMovies = [
         imdb: "8.0",
         verdict: "Global Phenomenon",
         aiScore: 98,
-        isTrending: false,
+        isTrending: false, genres: ["Action","Sci-Fi","Adventure"],
         // THE FIX: Added the missing chart arrays!
         social: [45, 25, 20, 10],
         sentimentLine: { pos: [70, 85, 95, 98, 99], neg: [15, 10, 5, 2, 1] },
@@ -228,33 +227,8 @@ window.mockMovies = [
 // DYNAMIC ENGINE DATA (APPENDED)
 // ============================================================
 
-// Multi-Vector Historical Comps (Simulating deep model analysis)
-window.historicalComps = [
-    {
-        title: "Spider-Man: No Way Home",
-        vectorType: "Franchise Top Benchmark",
-        budget: "$200M", opening: "$260.1M", gross: "$1.92B", roi: "9.6x",
-        img: "https://www.movieposters.com/cdn/shop/products/301983133_1072845516765536_7607702103270945846_n.jpg?v=1762971336&width=1680" // Actual poster
-    },
-    {
-        title: "Avengers: Endgame",
-        vectorType: "Genre Top Benchmark",
-        budget: "$356M", opening: "$357.1M", gross: "$2.79B", roi: "7.8x",
-        img: "https://image.tmdb.org/t/p/w500/or06FN3Dka5tukK1e9sl16pB3iy.jpg"
-    },
-    {
-        title: "Interstellar",
-        vectorType: "Director Benchmark",
-        budget: "$100M", opening: "$82.4M", gross: "$968.3M", roi: "9.6x",
-        img: "https://www.movieposters.com/cdn/shop/files/interstellar-139399.jpg?v=1762974876&width=1680"
-    },
-    {
-        title: "Oppenheimer",
-        vectorType: "Lead Actor Benchmark",
-        budget: "$200M", opening: "$174.1M", gross: "$1.21B", roi: "6.0x",
-        img: "https://www.movieposters.com/cdn/shop/files/oppenheimer_ver3.jpg?v=1762973011&width=1680"
-    }
-];
+// Multi-Vector Historical Comps (Populated dynamically by API)
+window.historicalComps = [];
 
 // Market Radar (Upcoming Future Movies Only)
 window.upcomingRadar = [

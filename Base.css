@@ -2233,9 +2233,13 @@ details[open] {
 }
 
 .chart-subtitle {
-  font-size: 12px;
-  color: var(--color-tertiary);
+  font-size: 11px;
+  color: var(--color-secondary);
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
 }
 
 .chart-container {
@@ -2529,11 +2533,15 @@ details[open] {
 }
 
 /* 2. Light Mode Background & Blue Highlight Line */
-.search-item:hover,
+.search-item:hover {
+  background: rgba(0, 85, 255, 0.25);
+  cursor: pointer;
+}
+
 .search-item.active-search-item {
   background: rgba(0, 85, 255, 0.25);
-  box-shadow: inset 3px 0 0 var(--color-accent);
-  /* Draws the line INSIDE the box */
+  box-shadow: inset 4px 0 0 var(--color-accent);
+  /* Draws the line INSIDE the box only for key navigation */
   cursor: pointer;
 }
 
@@ -4010,8 +4018,6 @@ UX POLISH: SEARCH HIGHLIGHT & 3-DOTS BUTTON
 .search-item.active-search-item {
   background-color: rgba(0, 85, 255, 0.25) !important;
   /* Soft blue background */
-  border-left: 1px solid var(--color-accent);
-  /* Sharp left indicator */
 }
 
 /* Make only the title blue on hover, leave the meta text muted */
@@ -5675,47 +5681,6 @@ body {
   transition: background 0.2s;
 }
 
-
-/* ============================================================
-   AUTOCOMPLETE DROPDOWN INTERACTION PHYSICS
-   ============================================================ */
-
-/* 1. Light Mode Background (Soft blue) */
-.autocomplete-menu li:hover,
-.autocomplete-menu li.selected {
-  border-left: 4px solid var(--color-accent);
-  padding-left: 6px;
-  background: rgba(0, 85, 255, 0.25);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.autocomplete-menu li.selected {
-  border-left: 4px solid var(--color-accent) !important;
-  padding-left: 6px;
-  /* Adjust padding to accommodate the border */
-}
-
-/* 2. THE FIX: Dark Mode Background (Premium translucent grey) */
-/* Notice the SPACE between [data-theme="dark"] and .autocomplete-menu! */
-html[data-theme="dark"] .autocomplete-menu li:hover,
-html[data-theme="dark"] .autocomplete-menu li.selected {
-  background: rgba(255, 255, 255, 0.08) !important;
-}
-
-/* 3. The Highlight Physics (Title & Right Icon) */
-.autocomplete-menu li:hover span:first-of-type,
-.autocomplete-menu li.selected span:first-of-type,
-.autocomplete-menu li:hover i,
-.autocomplete-menu li.selected i {
-  color: var(--color-accent) !important;
-  opacity: 1 !important;
-  /* Snaps the faded icon to full visibility */
-  transition: color 0.2s ease, opacity 0.2s ease;
-}
-
-
-
 /* Trending Posters (Medium Cinema Size) */
 .trending-poster {
   width: 300px;
@@ -6119,27 +6084,6 @@ main:has(#prediction-results-view:not([style*="display: none"])) .content-slider
 }
 
 /* ============================================================
-   MOBILE RESPONSIVENESS FIX FOR PREDICTION DASHBOARD
-   ============================================================ */
-@media (max-width: 768px) {
-    .pred-dash-root {
-        flex-direction: column !important;
-        padding: 16px !important;
-        gap: 16px !important;
-    }
-    
-    .pred-dash-root > .glass-panel {
-        width: 100% !important;
-    }
-
-    .pred-poster-col, .pred-info-col, .pred-sidebar-col {
-        width: 100% !important;
-        min-width: 100% !important;
-        flex: 1 1 100% !important;
-    }
-}
-
-/* ============================================================
    LIHO OPTIMIZATIONS: MOBILE RESPONSIVENESS & SPARKLINES
    ============================================================ */
 
@@ -6172,4 +6116,28 @@ main:has(#prediction-results-view:not([style*="display: none"])) .content-slider
   to {
     stroke-dashoffset: 0;
   }
+}
+.search-item.active {
+  border-color: var(--color-accent) !important;
+  box-shadow: 0 0 15px rgba(0, 242, 255, 0.2) !important;
+}
+
+.search-item:hover .search-title {
+  color: var(--color-accent) !important;
+}
+
+.search-poster {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* 5. Search Icon Feedback */
+#hero-search-icon.fa-spin {
+  color: var(--color-accent) !important;
+  filter: drop-shadow(0 0 5px var(--color-accent));
+}
+
+/* 6. Empty State Polish */
+.search-empty-state {
+  padding: 40px 20px !important;
+  text-align: center !important;
 }
