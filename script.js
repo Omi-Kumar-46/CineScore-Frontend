@@ -43,6 +43,7 @@ window.CineAPI = {
     BASE_URL: "http://127.0.0.1:8000",
 
     async predict(pitchData) {
+        if (window.CineState.offlineMode) return null;
         try {
             const resp = await fetch(`${this.BASE_URL}/predict`, {
                 method: "POST",
@@ -53,28 +54,33 @@ window.CineAPI = {
             return await resp.json();
         } catch (e) {
             console.error("CineAPI Predict Error:", e);
+            if (e.message.includes('Failed to fetch')) window.CineState.offlineMode = true;
             return null;
         }
     },
 
     async searchShowdown(query) {
+        if (window.CineState.offlineMode) return [];
         try {
             const resp = await fetch(`${this.BASE_URL}/search_showdown?title=${encodeURIComponent(query)}`);
             if (!resp.ok) throw new Error("API Search Failed");
             return await resp.json();
         } catch (e) {
             console.error("CineAPI Search Error:", e);
+            if (e.message.includes('Failed to fetch')) window.CineState.offlineMode = true;
             return [];
         }
     },
 
     async getTrending() {
+        if (window.CineState.offlineMode) return [];
         try {
             const resp = await fetch(`${this.BASE_URL}/trending_predictions`);
             if (!resp.ok) throw new Error("API Trending Failed");
             return await resp.json();
         } catch (e) {
             console.error("CineAPI Trending Error:", e);
+            if (e.message.includes('Failed to fetch')) window.CineState.offlineMode = true;
             return [];
         }
     }
@@ -87,16 +93,36 @@ window.TMDB_API = {
     IMG_URL: "https://image.tmdb.org/t/p/w500",
 
     async fetch(endpoint, params = "") {
+        // 1. Silent Check: If we already know the backend is dead, don't even try.
+        if (window.CineState.offlineMode) return null;
+
+        // 2. Concurrency Lock: If a probe is already in flight, wait for it instead of starting a new one.
+        if (this._activeProbe) return null; 
+
         try {
+            this._activeProbe = true;
             const url = `${this.BASE_URL}/${endpoint}?${params}`;
-            const resp = await fetch(url);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2500); // Tighten to 2.5s for snappy feel
+
+            const resp = await fetch(url, { signal: controller.signal });
+            clearTimeout(timeoutId);
+            this._activeProbe = false;
+
             if (!resp.ok) throw new Error(`TMDB Proxy Failed: ${resp.status}`);
             return await resp.json();
         } catch (e) {
-            console.error("TMDB Proxy Error:", e);
-            return null; // Return null to trigger fallback logic in callers
+            this._activeProbe = false;
+            console.warn("CineScore Safe-Mode Engaged (Local Only).");
+            
+            // Mark as offline for this session
+            if (e.name === 'AbortError' || e.message.includes('Failed to fetch') || e.message.includes('Refused')) {
+                window.CineState.offlineMode = true;
+            }
+            return null; 
         }
     },
+    _activeProbe: false,
 
     async searchMovies(query) {
         const results = await this.fetch("search", `query=${encodeURIComponent(query)}`);
@@ -225,28 +251,32 @@ document.addEventListener('DOMContentLoaded', () => {
             badge.innerHTML = '<span style="width:6px;height:6px;background:var(--color-accent);border-radius:50%;box-shadow:0 0 8px var(--color-accent);display:inline-block;"></span> Live Database Syncing...';
             heroDropdown.appendChild(badge);
 
-            // 2. Debounced API Call
+            // 2. Local-First Search (Instant)
+            const mocks = (window.mockMovies || []).filter(m => m.title.toLowerCase().includes(query)).slice(0, 5);
+            if (mocks.length > 0) {
+                renderHeroResults(mocks, true); // Show local results while syncing
+            }
+
+            // 3. Debounced API Call (Only if not in offline mode)
             heroSearchTimeout = setTimeout(async () => {
-                if (window.TMDB_API && typeof window.TMDB_API.searchMovies === 'function') {
+                if (!window.CineState.offlineMode && window.TMDB_API && typeof window.TMDB_API.searchMovies === 'function') {
                     try {
                         const live = await window.TMDB_API.searchMovies(query);
                         
-                        // 3. Prevent Race Conditions (Stale Data Check)
                         if (heroInput.value.trim().toLowerCase() !== query) return;
 
                         if (live && live.length > 0) {
-                            renderHeroResults(live.slice(0, 8), false);
-                        } else {
-                            const mocks = (window.mockMovies || []).filter(m => m.title.toLowerCase().includes(query)).slice(0, 5);
-                            renderHeroResults(mocks, false);
+                            // Filter out duplicates that are already in mock
+                            const filteredLive = live.filter(l => !mocks.some(m => m.title.toLowerCase() === l.title.toLowerCase()));
+                            renderHeroResults([...mocks, ...filteredLive.slice(0, 5)], false);
+                        } else if (mocks.length === 0) {
+                            renderHeroResults([], false);
                         }
                     } catch (err) {
                         if (heroInput.value.trim().toLowerCase() !== query) return;
-                        const mocks = (window.mockMovies || []).filter(m => m.title.toLowerCase().includes(query)).slice(0, 5);
                         renderHeroResults(mocks, false);
                     }
                 } else {
-                    const mocks = (window.mockMovies || []).filter(m => m.title.toLowerCase().includes(query)).slice(0, 5);
                     renderHeroResults(mocks, false);
                 }
             }, 400);
@@ -445,11 +475,11 @@ function initThemeEngine() {
     const sidebarLogo = document.getElementById('sidebar-logo');
 
     function updateLogos(theme) {
-        const mainlogoPath = theme === 'dark' ? 'Assets/CineScore-Dark.png' : 'Assets/CineScore-Light.png';
+        const mainlogoPath = theme === 'dark' ? 'Assets/CineScore-Dark.webp' : 'Assets/CineScore-Light.webp';
         if (navLogo) navLogo.src = mainlogoPath;
         if (footerLogo) footerLogo.src = mainlogoPath;
 
-        const dashboardLogoPath = theme === 'dark' ? 'Assets/CineScore-Light.png' : 'Assets/CineScore-Dark.png';
+        const dashboardLogoPath = theme === 'dark' ? 'Assets/CineScore-Light.webp' : 'Assets/CineScore-Dark.webp';
         if (sidebarLogo) sidebarLogo.src = dashboardLogoPath;
     }
 
@@ -679,31 +709,29 @@ document.addEventListener("DOMContentLoaded", () => {
         const tickerTrack = document.getElementById('live-hype-track');
         if (!tickerTrack) return;
 
-        let movies = [];
-        try {
-            const upcoming = await window.TMDB_API.getUpcoming();
-            if (upcoming && upcoming.length > 0) {
-                const today = new Date();
-                movies = upcoming.filter(m => {
-                    const title = (m.title || "").toLowerCase();
-                    const isUpcoming = m.release_date && new Date(m.release_date) > today;
-                    const isNotJunk = !title.includes('tour') && !title.includes('concert') && !title.includes('documentary');
-                    return isUpcoming && isNotJunk;
-                });
-            }
-        } catch (e) { console.error("Hype Meter API Fail:", e); }
+        // CINESCORE BYPASS: Prioritize our high-fidelity 2026/2025 mock data
+        // This avoids wasteful API calls for movies we've already benchmarked.
+        const db = window.mockMovies || [];
+        let movies = [...db];
 
-        // HARD FALLBACK: Only trigger if TMDB is completely empty or unreachable
-        if (movies.length === 0) {
-            console.log("TMDB Hype Data empty, using mock fallback.");
-            const db = window.mockMovies || [];
-            const safeMock = [
-                { title: "Spider-Man: Brand New Day", release_date: "2026-07-31", popularity: 99, poster: "https://legadodamarvel.com.br/en/wp-content/uploads/2026/04/Spider-Man-Brand-New-Day-poster-legadodamarvel-819x1024.webp", studio: "Sony / Marvel" },
-                { title: "Avengers: Doomsday", release_date: "2026-05-01", popularity: 98, poster: "https://www.movieposters.com/cdn/shop/files/avengers-doomsday_2lkvs30c.jpg?v=1768329841&width=1680", studio: "Marvel Studios" },
-                { title: "Dune: Part Three", release_date: "2026-12-18", popularity: 97, poster: "https://cdn.cinematerial.com/p/297x/bw5f0vwv/dune-part-three-movie-poster-md.jpg?v=1775526461", studio: "Warner Bros." },
-                { title: "The Batman Part II", release_date: "2026-10-02", popularity: 96, poster: "https://www.movieposters.com/cdn/shop/products/the-batman_hyktligc.jpg?v=1762969722&width=1680", studio: "DC Studios" }
-            ];
-            movies = [...db, ...safeMock];
+        // Background Live Sync (Optional enhancement)
+        if (!window.CineState.offlineMode) {
+            try {
+                const upcoming = await window.TMDB_API.getUpcoming();
+                if (upcoming && upcoming.length > 0) {
+                    const today = new Date();
+                    const liveUpcoming = upcoming.filter(m => {
+                        const title = (m.title || "").toLowerCase();
+                        const isUpcoming = m.release_date && new Date(m.release_date) > today;
+                        const isNotJunk = !title.includes('tour') && !title.includes('concert') && !title.includes('documentary');
+                        return isUpcoming && isNotJunk;
+                    });
+                    // Merge live data with our master mock list
+                    movies = [...movies, ...liveUpcoming];
+                }
+            } catch (e) { 
+                console.log("Hype Meter: Running in Pure Local Mode."); 
+            }
         }
 
         // Randomize rotation for fresh visuals on reload

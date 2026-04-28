@@ -5,11 +5,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Prediction Results - CineScore</title>
-    <link rel="icon" type="image/png" sizes="32x32" href="Assets/Favicon.png">
+    <link rel="icon" type="image/webp" sizes="32x32" href="Assets/Favicon.webp">
     <link rel="stylesheet" href="Base.css">
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="mockData.js" defer></script>
+    <script src="script.js" defer></script>
 </head>
 
 <body>
@@ -33,7 +35,7 @@
             <div class="container">
                 <div class="row-between">
                     <a href="index.html" class="navlogo">
-                        <img id="nav-logo" class="logo" src="Assets/CineScore-Light.png" alt="CineScore">
+                        <img id="nav-logo" class="logo" src="Assets/CineScore-Light.webp" alt="CineScore">
                     </a>
                     <ul class="nav-links row">
                         <li><a href="index.html">Home</a></li>
@@ -148,12 +150,12 @@
 
             <div class="cinematic-slider"
                 style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; overflow: hidden; border-bottom-left-radius:48px !important; border-bottom-right-radius: 48px!important;">
-                <img class="active" style="background-position: top" src="Assets/Blank-State-Hero-1.jpg" alt="Background">
-                <img style="background-position: top" src="Assets/Blank-State-Hero-2.jpg" alt="Background">
-                <img style="background-position: top" src="Assets/Blank-State-Hero-3.jpg" alt="Background">
-                <img style="background-position: top" src="Assets/Blank-State-Hero-4.jpg" alt="Background">
-                <img style="background-position: top" src="Assets/Blank-State-Hero-5.jpg" alt="Background">
-                <img style="background-position: top" src="Assets/Blank-State-Hero-6.jpg" alt="Background">
+                <img class="active" style="background-position: top" src="Assets/Blank-State-Hero-1.webp" alt="Background">
+                <img style="background-position: top" src="Assets/Blank-State-Hero-2.webp" alt="Background">
+                <img style="background-position: top" src="Assets/Blank-State-Hero-3.webp" alt="Background">
+                <img style="background-position: top" src="Assets/Blank-State-Hero-4.webp" alt="Background">
+                <img style="background-position: top" src="Assets/Blank-State-Hero-5.webp" alt="Background">
+                <img style="background-position: top" src="Assets/Blank-State-Hero-6.webp" alt="Background">
 
                 <div class="hero-ambient-overlay"
                     style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none;">
@@ -1165,7 +1167,7 @@
 
                 <div class="stack">
                     <a href="#" class="navlogo">
-                        <img id="footer-logo" src="Assets/CineScore-Light.png" alt="Cine.Metrics" class="logo">
+                        <img id="footer-logo" src="Assets/CineScore-Light.webp" alt="Cine.Metrics" class="logo">
                     </a>
                     <p class="small" style="margin-top: 12px; color: var(--color-secondary);">
                         Predicting Cinematic Success.
@@ -1302,8 +1304,6 @@
         </div>
     </div>
 
-    <script src="mockData.js"></script>
-    <script src="script.js"></script>
 </body>
 
 </html>

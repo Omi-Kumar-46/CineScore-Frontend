@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="Assets/CineScore-Light.png" alt="CineScore Logo" width="300"/>
+  <img src="Assets/CineScore-Light.webp" alt="CineScore Logo" width="300"/>
   <h1>CineScore</h1>
   <p><b>Predicting Cinematic Success.</b></p>
 </div>

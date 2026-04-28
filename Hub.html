@@ -1,15 +1,17 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en" data-theme="dark">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Director's Hall of Fame - CineScore</title>
-    <link rel="icon" type="image/png" sizes="32x32" href="Assets/Favicon.png">
+    <link rel="icon" type="image/webp" sizes="32x32" href="Assets/Favicon.webp">
     <link rel="stylesheet" href="Base.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css"
         integrity="sha512-2SwdPD6INVrV/lHTZbO2nodKhrnDdJK9/kg2XD1r9uGqPo1cUbujc+IYdlYdEErWNu69gVcYgdxlmVmzTWnetw=="
         crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <script src="mockData.js" defer></script>
+    <script src="script.js" defer></script>
 </head>
 
 <div id="global-page-loader" class="global-loader">
@@ -35,7 +37,7 @@
                     <i class="fa-solid fa-bars"></i>
                 </button>
                 <a href="index.html" class="navlogo sidebar-logo-wrapper">
-                    <img id="sidebar-logo" src="Assets/CineScore-Light.png" alt="CineScore" class="logo"
+                    <img id="sidebar-logo" src="Assets/CineScore-Light.webp" alt="CineScore" class="logo"
                         style="height: 32px; width: auto; display: block;">
                 </a>
             </div>
@@ -565,7 +567,7 @@
                     <div class="stack" style="gap: 4px;">
                         <h3 id="modal-movie-title" style="margin: 0; color: var(--color-primary); font-size: 22px;">
                             Movie Title</h3>
-                        <p class="meta text-muted" style="margin: 0; font-size: 13px;" id="modal-movie-meta">2026 â€¢
+                        <p class="meta text-muted" style="margin: 0; font-size: 13px;" id="modal-movie-meta">2026 •
                             Tracking</p>
                     </div>
                 </div>
@@ -706,7 +708,7 @@
     <div id="onboardingModal" class="modal-overlay" style="display: none; z-index: 10000;">
         <div class="form-content stack">
             <h2 style="margin: 0; color: var(--color-primary); text-align: center; font-size: 28px;">Welcome to
-                Cine<span class="text-accent">Score</span>! ðŸ¿</h2>
+                Cine<span class="text-accent">Score</span>! 🍿</h2>
             <p
                 style="text-align: center; color: var(--color-secondary); margin-bottom: 24px; margin-top: 4px; line-height: 1.5;">
                 Let's set up your director's chair. Choose your identity for the Hall of Fame.</p>
@@ -788,8 +790,6 @@
         </ul>
     </div>
 
-    <script src="mockData.js"></script>
-    <script src="script.js"></script>
 </body>
 
 </html>
