@@ -91,6 +91,7 @@ window.TMDB_API = {
     // SECURITY: TOKEN is now stored in main.py. Frontend calls backend proxy.
     BASE_URL: "http://127.0.0.1:8000/tmdb", 
     IMG_URL: "https://image.tmdb.org/t/p/w500",
+    IMG_PROXY_URL: "http://127.0.0.1:8000/tmdb/poster",
 
     async fetch(endpoint, params = "") {
         // 1. Silent Check: If we already know the backend is dead, don't even try.
@@ -137,6 +138,24 @@ window.TMDB_API = {
     async discoverReleased(genreId) {
         const results = await this.fetch("discover", `genre_id=${genreId}`);
         return results || [];
+    },
+
+    getPosterProxyUrl(input, size = "w500") {
+        if (!input) return "";
+        if (input.includes("/tmdb/poster?")) return input;
+
+        let posterPath = "";
+        if (input.startsWith("http")) {
+            const match = input.match(/image\.tmdb\.org\/t\/p\/(?:original|w\d+)(\/.+)$/i);
+            if (!match) return input;
+            posterPath = match[1];
+        } else if (input.startsWith("/")) {
+            posterPath = input;
+        } else {
+            posterPath = `/${input.replace(/^\/+/, "")}`;
+        }
+
+        return `${this.IMG_PROXY_URL}?path=${encodeURIComponent(posterPath)}&size=${encodeURIComponent(size)}`;
     }
 };
 
@@ -367,33 +386,10 @@ function initNavigationFeatures() {
     });
     fab.onclick = () => window.scrollTo({ top: 0, behavior: 'smooth' });
 
-    // Share Snapshot / Copy Link Feature
+    // Share Snapshot Feature (Snapshot Logic shifted to captureSnapshot in Section 18)
     const shareBtn = document.getElementById('share-btn');
-    if (shareBtn) {
-        shareBtn.addEventListener('click', async () => {
-            try {
-                // If there's an active movie, mock a deep link (for future backend)
-                const activeMovie = sessionStorage.getItem('cineScore_activePrediction');
-                let urlToCopy = window.location.href;
-                if (activeMovie && !urlToCopy.includes('?movie=')) {
-                    // Strip existing hashes and mock a beautiful share link
-                    urlToCopy = urlToCopy.split('#')[0] + "?movie=" + encodeURIComponent(activeMovie);
-                }
-
-                await navigator.clipboard.writeText(urlToCopy);
-                
-                const originalHTML = shareBtn.innerHTML;
-                shareBtn.innerHTML = '<i class="fa-solid fa-check"></i> Link Copied!';
-                shareBtn.style.color = 'var(--color-success)';
-                
-                setTimeout(() => {
-                    shareBtn.innerHTML = originalHTML;
-                    shareBtn.style.color = '';
-                }, 2500);
-            } catch (err) {
-                console.error('Failed to copy link: ', err);
-            }
-        });
+    if (shareBtn && typeof initPersistentUX === 'undefined') {
+        // Fallback or placeholder if needed
     }
 }
 
@@ -1514,8 +1510,8 @@ const executePredictionBridge = (movieName) => {
             // Dynamic Genre Pills Injection
             const genreContainer = document.getElementById('dyn-genres');
             if (genreContainer) {
-                // Check if the mock data has a genres array, otherwise fallback
-                const genres = activeMovie.genres || ["Action", "Blockbuster"];
+                // THE FIX: Restricted to top 2 genres for a cleaner look
+                const genres = (activeMovie.genres || ["Action", "Blockbuster"]).slice(0, 2);
                 genreContainer.innerHTML = genres.map(g => `<span class="genre-pill" style="margin: 0;">${g}</span>`).join('');
             }
 
@@ -2961,12 +2957,15 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             }
 
-            // ACTION: FLEX / SHARE (For Legacy Tab)
-            if (action === 'ctx-flex') {
-                if (typeof window.showCustomAlert === 'function') {
-                    window.showCustomAlert('success', 'Legacy Secured', `Your prediction for <b>${title}</b> is ready to share. (Social API integration coming soon!)`);
+            // ACTION: FLEX / SHARE (Enhanced with Snaphot Engine)
+            if (action === 'ctx-flex' && targetCardEl) {
+                // We reuse the existing captureSnapshot utility
+                if (typeof captureSnapshot === 'function') {
+                    // We pass the context menu option as the 'button' to show feedback there
+                    const flexOption = e.target.closest('#context-menu li');
+                    captureSnapshot(targetCardEl, flexOption || e.target);
                 } else {
-                    alert(`Flexing prediction for ${title}!`);
+                    console.error("CineScore: Snapshot engine not loaded.");
                 }
             }
 
@@ -3477,76 +3476,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // 3. Good/Bad Smart Toggle
-    const voteBtns = document.querySelectorAll('.vote-btn');
-    voteBtns.forEach(btn => {
-        btn.addEventListener('click', function () {
-            if (!isLoggedIn) {
-                const signupModal = document.getElementById('signupModal');
-                if (signupModal) signupModal.style.display = 'flex';
-                return;
-            }
-
-            const isActive = this.style.opacity === '1' && this.innerHTML.includes('Voted');
-
-            // Reset all
-            voteBtns.forEach(b => {
-                b.style.opacity = '0.7';
-                b.style.transform = 'scale(1)';
-                b.style.color = '';
-                b.style.fontWeight = '600';
-                b.style.background = ''; // Clear light mode active bg
-                const isUpBtn = b.getAttribute('data-vote') === 'up';
-                b.innerHTML = isUpBtn ? '<i class="fa-regular fa-thumbs-up"></i> Good Prediction' : '<i class="fa-regular fa-thumbs-down"></i> Bad Prediction';
-                b.classList.remove('active-voted');
-            });
-
-            // Toggle On
-            if (!isActive) {
-                this.classList.add('active-voted'); // THE FIX: Apply reliable CSS class
-                this.style.opacity = '1';
-                this.style.transform = 'scale(1.05)';
-                this.style.fontWeight = '800';
-                const isUp = this.getAttribute('data-vote') === 'up';
-                this.style.color = isUp ? 'var(--color-success)' : 'var(--color-danger)';
-                if (document.documentElement.getAttribute('data-theme') === 'light') {
-                    this.style.background = isUp ? 'rgba(0, 200, 83, 0.1)' : 'rgba(239, 68, 68, 0.1)';
-                }
-                this.innerHTML = isUp ? '<i class="fa-solid fa-thumbs-up"></i> Voted Good' : '<i class="fa-solid fa-thumbs-down"></i> Voted Bad';
-            } else {
-                this.classList.remove('active-voted'); // Remove if toggled off
-            }
-        });
-    });
-
-    // 4. Download Snapshot Simulator (Auth Guarded)
-    const shareBtn = document.getElementById('share-btn');
-    if (shareBtn) {
-        shareBtn.addEventListener('click', function () {
-            // THE FIX: Added Auth Guard check
-            if (!isLoggedIn) {
-                const signupModal = document.getElementById('signupModal');
-                if (signupModal) signupModal.style.display = 'flex';
-                return;
-            }
-
-            const originalHTML = this.innerHTML;
-            this.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Downloading...';
-            this.style.setProperty('color', 'var(--color-warning)', 'important');
-            this.style.pointerEvents = 'none';
-
-            setTimeout(() => {
-                this.innerHTML = '<i class="fa-solid fa-download"></i> Downloaded';
-                this.style.setProperty('color', 'var(--color-success)', 'important');
-
-                setTimeout(() => {
-                    this.innerHTML = originalHTML;
-                    this.style.color = '';
-                    this.style.pointerEvents = 'auto';
-                }, 3000);
-            }, 1500);
-        });
-    }
+    // Redundant Share and Vote listeners removed.
+    // Core logic is now handled in Section 19 (Persistent Feedback Engine).
 
     // 6. Prediciton Page Search Bar with Intelligent Dropdown (With Auth Guard)
     const resultViewSearchInput = document.getElementById('result-view-search-input');
@@ -4504,8 +4435,13 @@ function loadMovieData(movieName, shouldAnimate) {
     }
 
     // --- 2. THE TMDB CATCH: Parse LocalStorage Data ---
-    const savedData = localStorage.getItem('cinescore_active_movie_data');
-    let activeData = savedData ? JSON.parse(savedData) : { title: movieName, poster: '', year: '2026' };
+    const savedDataStr = localStorage.getItem('cinescore_active_movie_data');
+    const parsedData = savedDataStr ? JSON.parse(savedDataStr) : null;
+    
+    // THE FIX: Only use savedData if it actually matches the requested movieName
+    let activeData = (parsedData && parsedData.title && parsedData.title.toLowerCase() === movieName.toLowerCase()) 
+        ? parsedData 
+        : { title: movieName, poster: '', year: '2026' };
 
     // --- 2.5 THE MOCK CROSS-REFERENCE (Fixes TBA issues for new films) ---
     // Fuzzy Match: Check if the searched title is part of the mock title or vice versa
@@ -4532,7 +4468,18 @@ function loadMovieData(movieName, shouldAnimate) {
 
     // --- 3. INSTANT VISUAL HYDRATION (No Blank Screens) ---
     const updateEl = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
-    const updateSrc = (id, url) => { const el = document.getElementById(id); if (el) el.src = url; };
+    const updateSrc = (id, url) => { 
+        const el = document.getElementById(id); 
+        if (el) {
+            // Intelligent CORS Proxy: Use weserv.nl for known hostile CDNs
+            let finalUrl = url;
+            if (url && (url.includes('cinematerial.com') || url.includes('movieposters.com'))) {
+                finalUrl = `https://images.weserv.nl/?url=${encodeURIComponent(url.split('?')[0])}`;
+            }
+            el.crossOrigin = "anonymous";
+            el.src = finalUrl; 
+        }
+    };
 
     // Check if the movie is already released to avoid 'TBA' labels
     const isReleased = activeData.release_date ? new Date(activeData.release_date) < new Date() : false;
@@ -4554,7 +4501,13 @@ function loadMovieData(movieName, shouldAnimate) {
     // Synopsis & Background Sync
     if (activeData.synopsis) updateEl('dyn-synopsis', activeData.synopsis);
     const heroBg = document.getElementById('hero-bg-blur');
-    if (heroBg) heroBg.style.backgroundImage = `url('${activeData.poster}')`;
+    if (heroBg) {
+        let bgUrl = activeData.poster;
+        if (bgUrl && (bgUrl.includes('cinematerial.com') || bgUrl.includes('movieposters.com'))) {
+            bgUrl = `https://images.weserv.nl/?url=${encodeURIComponent(bgUrl.split('?')[0])}`;
+        }
+        heroBg.style.backgroundImage = `url('${bgUrl}')`;
+    }
 
     // --- 4. THE FASTAPI HANDSHAKE (syncAPIData) ---
     async function syncAPIData() {
@@ -5042,7 +4995,7 @@ async function initUniversalDailyRotations() {
             return `
                 <div class="poster-card" style="width: 140px; cursor: pointer; border-radius: 8px; overflow: hidden; position: relative; box-shadow: 0 10px 20px rgba(0,0,0,0.5); transition: transform 0.2s;" 
                      onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'"
-                     onclick='if (${isLocked}) { window.showCustomAlert("error", "Prediction Locked", "This movie is already released."); return; } if (typeof window.executePredictionBridge === "function") window.executePredictionBridge("${m.title.replace(/'/g, "\\'")}");'>
+                     onclick='if (${isLocked}) { window.showCustomAlert("error", "Prediction Locked", "This movie is already released."); return; } const activeData = ${activeDataStr}; localStorage.setItem("cinescore_active_movie_data", JSON.stringify(activeData)); if (typeof window.executePredictionBridge === "function") window.executePredictionBridge("${m.title.replace(/'/g, "\\'")}");'>
                     <img src="${imgUrl}" alt="${m.title}" style="width: 100%; height: 100%; object-fit: cover;">
                     ${isLocked ? '<div style="position:absolute; top:8px; right:8px; background:rgba(244,63,94,0.9); color:#fff; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:800;"><i class="fa-solid fa-lock"></i></div>' : ''}
                     <div class="poster-overlay stack" style="align-items: center; justify-content: center; text-align: center; padding: 12px; background: rgba(11, 25, 44, 0.9);">
@@ -5061,7 +5014,7 @@ async function initUniversalDailyRotations() {
             const imgUrl = m.poster_path ? `${window.TMDB_API.IMG_URL}${m.poster_path}` : (m.poster || 'https://placehold.co/200x300/111/FFF?text=Poster');
             const releaseYear = m.release_date ? m.release_date.split('-')[0] : (m.year || '2026');
             return `
-                <div class="poster-card" style="cursor: pointer;" onclick="const activeData = {title: '${m.title.replace(/'/g, "\\'")}', poster: '${imgUrl}', year: '${releaseYear}', synopsis: '${(m.overview || m.synopsis || '').replace(/'/g, "\\'")}', id: ${m.id || 0}}; localStorage.setItem('cinescore_active_movie_data', JSON.stringify(activeData)); triggerPredictionState('${m.title.replace(/'/g, "\\'")}');">
+                <div class="poster-card" style="cursor: pointer;" onclick="const activeData = {title: '${m.title.replace(/'/g, "\\'")}', poster: '${imgUrl}', year: '${releaseYear}', release_date: '${m.release_date || ''}', synopsis: '${(m.overview || m.synopsis || '').replace(/'/g, "\\'")}', id: ${m.id || 0}}; localStorage.setItem('cinescore_active_movie_data', JSON.stringify(activeData)); if(typeof executePredictionBridge === 'function') { executePredictionBridge('${m.title.replace(/'/g, "\\'")}'); } else { triggerPredictionState('${m.title.replace(/'/g, "\\'")}'); }">
                     <img src="${imgUrl}" alt="${m.title}">
                     <div class="poster-overlay" style="align-items: center; justify-content: center; text-align: center;">
                         <span style="font-size: 11px; color: var(--color-warning); font-weight: 800; text-transform: uppercase; margin-bottom: 8px;">Trending Now</span>
@@ -5490,6 +5443,403 @@ document.addEventListener("DOMContentLoaded", () => {
         card.insertAdjacentHTML('beforeend', svgHTML);
     });
 });
+
+// ============================================================
+   // Share Snapshot button logic
+// ============================================================
+async function captureSnapshot(targetElement, buttonElement) {
+    if (!targetElement || !buttonElement) return;
+    if (typeof htmlToImage === 'undefined') return;
+
+    const originalHTML = buttonElement.innerHTML;
+    buttonElement.style.pointerEvents = 'none';
+    buttonElement.style.setProperty('color', 'var(--color-warning)', 'important');
+    buttonElement.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin" style="color: inherit !important;"></i> Downloading';
+
+    const computedBg = window.getComputedStyle(document.body).backgroundColor;
+    const isPredictionSnapshot = !!targetElement.querySelector('#predicted-movie-title, .ai-gauge-wrapper');
+    const canvasHeight = targetElement.offsetHeight - (isPredictionSnapshot ? 65 : 0);
+    const snapshotTitle = (
+        targetElement.dataset?.title ||
+        targetElement.querySelector('#predicted-movie-title, .movie-title, .tabular-title, h3, h4')?.textContent ||
+        document.getElementById('predicted-movie-title')?.textContent ||
+        'CineScore'
+    ).trim();
+    const fileSafeTitle = snapshotTitle
+        .replace(/[\\/:*?"<>|]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'CineScore';
+    const temporaryNodes = [];
+    const temporaryStyles = [];
+    const temporaryAssets = [];
+    let restored = false;
+    const icons = {
+        check: `<span style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;line-height:1;flex:0 0 auto;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00ff00" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></span>`,
+        radio: `<span style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;line-height:1;flex:0 0 auto;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"></circle><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"></path></svg></span>`,
+        trophy: `<span style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;line-height:1;flex:0 0 auto;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18 2H6v3H3v3a5 5 0 0 0 5 5h.1A6.99 6.99 0 0 0 11 16.92V20H8v2h8v-2h-3v-3.08A6.99 6.99 0 0 0 15.9 13H16a5 5 0 0 0 5-5V5h-3V2zm-9 9a3 3 0 0 1-3-3V7h1v2h2v2zm9-3a3 3 0 0 1-3 3V9h2V7h1v1z"></path></svg></span>`,
+        menu: `<span style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;line-height:1;flex:0 0 auto;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="12" cy="19" r="1.8"></circle></svg></span>`,
+        bookmark: `<span style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;line-height:1;flex:0 0 auto;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7a2 2 0 0 0-2 2v16l7-4 7 4V5a2 2 0 0 0-2-2z"></path></svg></span>`,
+        up: `<span style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;line-height:1;flex:0 0 auto;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21h4V9H2v12zM22 10a2 2 0 0 0-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L13.17 1 6.59 7.59C6.22 7.95 6 8.45 6 9v10a2 2 0 0 0 2 2h9a2 2 0 0 0 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"></path></svg></span>`,
+        down: `<span style="display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;line-height:1;flex:0 0 auto;"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M22 3h-4v12h4V3zM2 14a2 2 0 0 0 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L10.83 23l6.58-6.59c.37-.36.59-.86.59-1.41V5a2 2 0 0 0-2-2H7a2 2 0 0 0-1.84 1.22l-3.02 7.05A2 2 0 0 0 2 12v2z"></path></svg></span>`
+    };
+
+    const liveAnalysisBadge = targetElement.querySelector('.fa-tower-broadcast')?.closest('.badge');
+    const aiCertifiedBadge = targetElement.querySelector('.ai-certified-badge');
+    const aiGaugeValue = targetElement.querySelector('.ai-gauge-value');
+    const aiPercent = targetElement.querySelector('#dyn-ai-score + span');
+
+    const swapIcon = (el, svg) => {
+        const holder = document.createElement('span');
+        holder.innerHTML = svg;
+        const replacement = holder.firstElementChild;
+        el.replaceWith(replacement);
+        temporaryNodes.push({ original: el, replacement });
+    };
+
+    targetElement.querySelectorAll('i[class*="fa-"], span[class*="fa-"]').forEach(el => {
+        if (el.classList.contains('fa-check') || el.classList.contains('fa-check-circle') || el.classList.contains('fa-circle-check')) {
+            swapIcon(el, icons.check);
+        } else if (el.classList.contains('fa-tower-broadcast')) {
+            swapIcon(el, icons.radio);
+        } else if (el.classList.contains('fa-trophy')) {
+            swapIcon(el, icons.trophy);
+        } else if (el.classList.contains('fa-ellipsis-vertical')) {
+            swapIcon(el, icons.menu);
+        } else if (el.classList.contains('fa-bookmark')) {
+            swapIcon(el, icons.bookmark);
+        } else if (el.classList.contains('fa-thumbs-up')) {
+            swapIcon(el, icons.up);
+        } else if (el.classList.contains('fa-thumbs-down')) {
+            swapIcon(el, icons.down);
+        }
+    });
+
+    const preloadImage = (url) => new Promise((resolve) => {
+        const img = new Image();
+        let settled = false;
+        const done = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+        };
+        img.onload = done;
+        img.onerror = done;
+        img.src = url;
+        setTimeout(done, 1500);
+    });
+
+    const assetPreloads = [];
+    targetElement.querySelectorAll('img[src*="image.tmdb.org/t/p/"]').forEach((img) => {
+        const proxiedSrc = window.TMDB_API?.getPosterProxyUrl(img.src);
+        if (!proxiedSrc || proxiedSrc === img.src) return;
+        temporaryAssets.push({ type: 'img', el: img, value: img.src });
+        img.src = proxiedSrc;
+        assetPreloads.push(preloadImage(proxiedSrc));
+    });
+
+    targetElement.querySelectorAll('[style*="background"]').forEach((el) => {
+        const originalBg = el.style.backgroundImage;
+        if (!originalBg || !originalBg.includes('image.tmdb.org/t/p/')) return;
+        const proxiedBg = originalBg.replace(/https:\/\/image\.tmdb\.org\/t\/p\/(?:original|w\d+)(\/[^"')\s]+)/gi, (_, posterPath) => {
+            return window.TMDB_API?.getPosterProxyUrl(posterPath) || _;
+        });
+        if (proxiedBg === originalBg) return;
+        temporaryAssets.push({ type: 'bg', el, value: originalBg });
+        el.style.backgroundImage = proxiedBg;
+        const match = proxiedBg.match(/url\(["']?([^"')]+)["']?\)/i);
+        if (match && match[1]) assetPreloads.push(preloadImage(match[1]));
+    });
+
+    [targetElement.querySelector('.ai-gauge-value, #dyn-ai-score')?.parentElement, targetElement.querySelector('#dyn-trending-pill, .trending-pill')].filter(Boolean).forEach(el => {
+        temporaryStyles.push({ el, cssText: el.style.cssText });
+        el.style.setProperty('white-space', 'nowrap', 'important');
+        el.style.setProperty('display', 'inline-flex', 'important');
+        el.style.setProperty('width', 'auto', 'important');
+    });
+
+    [liveAnalysisBadge, aiCertifiedBadge, aiGaugeValue, aiPercent].filter(Boolean).forEach(el => {
+        temporaryStyles.push({ el, cssText: el.style.cssText });
+    });
+    if (liveAnalysisBadge) {
+        liveAnalysisBadge.style.setProperty('display', 'inline-flex', 'important');
+        liveAnalysisBadge.style.setProperty('align-items', 'center', 'important');
+        liveAnalysisBadge.style.setProperty('gap', '8px', 'important');
+        liveAnalysisBadge.style.setProperty('padding-right', '16px', 'important');
+        liveAnalysisBadge.style.setProperty('padding-left', '14px', 'important');
+        liveAnalysisBadge.style.setProperty('white-space', 'nowrap', 'important');
+        liveAnalysisBadge.style.setProperty('width', 'max-content', 'important');
+        liveAnalysisBadge.style.setProperty('flex-wrap', 'nowrap', 'important');
+        liveAnalysisBadge.querySelector('span:last-child')?.style.setProperty('margin-right', '2px', 'important');
+    }
+    if (aiCertifiedBadge) {
+        aiCertifiedBadge.style.setProperty('display', 'inline-flex', 'important');
+        aiCertifiedBadge.style.setProperty('align-items', 'center', 'important');
+        aiCertifiedBadge.style.setProperty('justify-content', 'center', 'important');
+        aiCertifiedBadge.style.setProperty('gap', '6px', 'important');
+        aiCertifiedBadge.style.setProperty('white-space', 'nowrap', 'important');
+        aiCertifiedBadge.style.setProperty('width', 'max-content', 'important');
+        aiCertifiedBadge.style.setProperty('flex-wrap', 'nowrap', 'important');
+    }
+    if (aiGaugeValue) {
+        aiGaugeValue.style.setProperty('display', 'inline-flex', 'important');
+        aiGaugeValue.style.setProperty('align-items', 'baseline', 'important');
+        aiGaugeValue.style.setProperty('justify-content', 'center', 'important');
+        aiGaugeValue.style.setProperty('gap', '4px', 'important');
+        aiGaugeValue.style.setProperty('white-space', 'nowrap', 'important');
+        aiGaugeValue.style.setProperty('width', 'auto', 'important');
+    }
+    if (aiPercent) {
+        aiPercent.style.setProperty('display', 'inline-block', 'important');
+        aiPercent.style.setProperty('margin-left', '2px', 'important');
+        aiPercent.style.setProperty('line-height', '1', 'important');
+        aiPercent.style.setProperty('white-space', 'nowrap', 'important');
+    }
+
+    const config = {
+        pixelRatio: 3,
+        width: targetElement.offsetWidth,
+        height: canvasHeight,
+        canvasWidth: targetElement.offsetWidth,
+        canvasHeight: canvasHeight,
+        backgroundColor: computedBg,
+        useCORS: true,
+        filter: (node) => node.id !== 'share-snapshot-btn' && node.id !== 'share-btn',
+        skipFonts: true
+    };
+
+    const safetyTimeout = setTimeout(() => {
+        restoreUI();
+    }, 15000);
+    const cleanupOnPageHide = () => restoreUI();
+    window.addEventListener('pagehide', cleanupOnPageHide, { once: true });
+
+    console.log("CineScore: Engaging Final-Strike Engine...");
+
+    try {
+        await document.fonts.ready;
+        await Promise.allSettled(assetPreloads);
+        const dataUrl = await htmlToImage.toPng(targetElement, config);
+        restoreUI();
+        
+        console.log("CineScore: Capture successful. Finalizing Ultra-Branding...");
+        const img = new Image();
+        img.onload = function() {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            
+            // Draw original capture
+            ctx.drawImage(img, 0, 0);
+            
+            // 3. Ultra-Branding: 100px White Watermark (40% Opacity)
+            ctx.globalAlpha = 0.4; 
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = isPredictionSnapshot ? '800 48px sans-serif' : '800 24px sans-serif'; 
+            ctx.textAlign = 'right';
+            
+            const watermarkText = "\u00A9 CineScore";
+            ctx.fillText(
+                watermarkText,
+                canvas.width - (isPredictionSnapshot ? 48 : 24),
+                canvas.height - (isPredictionSnapshot ? 48 : 24)
+            );
+            
+            canvas.toBlob((blob) => {
+                if (!blob) {
+                    console.error('Snapshot blob generation failed.');
+                    clearTimeout(safetyTimeout);
+                    window.removeEventListener('pagehide', cleanupOnPageHide);
+                    return;
+                }
+
+                const link = document.createElement('a');
+                const objectUrl = URL.createObjectURL(blob);
+                link.download = `${fileSafeTitle}-CineScore.png`;
+                link.href = objectUrl;
+                link.click();
+
+                setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+                canvas.width = 0;
+                canvas.height = 0;
+                clearTimeout(safetyTimeout);
+                window.removeEventListener('pagehide', cleanupOnPageHide);
+            }, "image/png");
+        };
+        img.onerror = function() {
+            clearTimeout(safetyTimeout);
+            window.removeEventListener('pagehide', cleanupOnPageHide);
+            restoreUI();
+        };
+        img.src = dataUrl;
+    } catch (error) {
+        console.error('Snapshot failed:', error);
+        clearTimeout(safetyTimeout);
+        window.removeEventListener('pagehide', cleanupOnPageHide);
+        restoreUI();
+    }
+
+    function restoreUI() {
+        if (restored) return;
+        restored = true;
+        temporaryNodes.reverse().forEach(({ original, replacement }) => {
+            if (replacement.parentNode) replacement.replaceWith(original);
+        });
+        temporaryAssets.reverse().forEach(({ type, el, value }) => {
+            if (!el) return;
+            if (type === 'img') el.src = value;
+            if (type === 'bg') el.style.backgroundImage = value;
+        });
+        temporaryStyles.forEach(({ el, cssText }) => {
+            el.style.cssText = cssText;
+        });
+        buttonElement.innerHTML = originalHTML;
+        buttonElement.style.color = '';
+        buttonElement.style.pointerEvents = 'auto';
+        clearTimeout(safetyTimeout);
+        window.removeEventListener('pagehide', cleanupOnPageHide);
+    }
+}
+
+// ============================================================
+// 19. PERSISTENT FEEDBACK ENGINE (YouTube-Style Toggles)
+// ============================================================
+const FeedbackEngine = {
+    getStorage() {
+        try {
+            return JSON.parse(localStorage.getItem('cinescore_feedback')) || {};
+        } catch (e) { return {}; }
+    },
+    saveVote(movieId, vote) {
+        const storage = this.getStorage();
+        if (vote === null) {
+            delete storage[movieId];
+        } else {
+            storage[movieId] = vote;
+        }
+        localStorage.setItem('cinescore_feedback', JSON.stringify(storage));
+    },
+    async syncWithBackend(title, vote) {
+        // Respect the CineState offline mode circuit breaker
+        if (window.CineState.offlineMode) return;
+        
+        try {
+            const resp = await fetch("http://127.0.0.1:8000/api/feedback", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    movie: title,
+                    vote: vote || "removed",
+                    timestamp: new Date().toISOString()
+                })
+            });
+            if (!resp.ok) throw new Error("Sync Failed");
+        } catch (e) {
+            console.warn("Feedback Sync skipped (Server Offline). Local state preserved.");
+            // Don't flip global offlineMode here, as feedback is secondary to core analysis
+        }
+    }
+};
+
+function initPersistentUX() {
+    // A. Prediction Page Logic
+    const shareBtn = document.getElementById('share-btn');
+    const resultView = document.getElementById('prediction-results-view');
+    const voteBtns = document.querySelectorAll('.vote-btn');
+
+    if (shareBtn && resultView) {
+        shareBtn.addEventListener('click', () => {
+            // Auth Guard integration
+            const isLoggedIn = localStorage.getItem('cinescore_auth') === 'true';
+            if (!isLoggedIn) {
+                const signupModal = document.getElementById('signupModal');
+                if (signupModal) signupModal.style.display = 'flex';
+                return;
+            }
+            
+            // THE ATMOSPHERIC TARGET: Capture the entire Hero Section with blur
+            const heroSection = document.querySelector('.prediction-hero');
+            captureSnapshot(heroSection || resultView, shareBtn);
+        });
+    }
+
+    if (voteBtns.length > 0) {
+        const activeMovie = sessionStorage.getItem('cineScore_activePrediction') || "Global";
+        const storage = FeedbackEngine.getStorage();
+        const initialVote = storage[activeMovie];
+
+        const updateVoteUI = (vote) => {
+            voteBtns.forEach(btn => {
+                const isUp = btn.getAttribute('data-vote') === 'up';
+                const btnType = isUp ? 'good' : 'bad';
+                const isActive = (btnType === vote);
+
+                // Apply active class for CSS protection
+                btn.classList.toggle('active-voted', isActive);
+
+                // Reverting to the "Inline Style" approach user preferred
+                btn.style.opacity = isActive ? '1' : '0.7';
+                btn.style.transform = isActive ? 'scale(1.05)' : 'scale(1)';
+                btn.style.fontWeight = isActive ? '800' : '600';
+                
+                // Use !important only when active to prevent blue hover override
+                if (isActive) {
+                    btn.style.setProperty('color', isUp ? 'var(--color-success)' : 'var(--color-danger)', 'important');
+                } else {
+                    btn.style.color = '';
+                }
+                
+                if (document.documentElement.getAttribute('data-theme') === 'light') {
+                    btn.style.background = isActive ? (isUp ? 'rgba(0, 200, 83, 0.1)' : 'rgba(239, 68, 68, 0.1)') : '';
+                }
+
+                btn.innerHTML = isActive 
+                    ? `<i class="fa-solid fa-thumbs-${isUp ? 'up' : 'down'}"></i> Voted ${isUp ? 'Good' : 'Bad'}`
+                    : `<i class="fa-regular fa-thumbs-${isUp ? 'up' : 'down'}"></i> ${isUp ? 'Good' : 'Bad'} Prediction`;
+            });
+        };
+
+        updateVoteUI(initialVote);
+
+        voteBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const btnType = btn.getAttribute('data-vote') === 'up' ? 'good' : 'bad';
+                const currentVote = FeedbackEngine.getStorage()[activeMovie];
+                
+                // Toggle Logic
+                const finalVote = (currentVote === btnType) ? null : btnType;
+                
+                // 1. UI First
+                updateVoteUI(finalVote);
+                
+                // 2. Persistence Second
+                FeedbackEngine.saveVote(activeMovie, finalVote);
+                
+                // 3. Network Third (Async)
+                FeedbackEngine.syncWithBackend(activeMovie, finalVote);
+            });
+        });
+    }
+
+    // B. Hub Page Delegation (Nomination Snapshots)
+    document.addEventListener('click', (e) => {
+        const shareOpt = e.target.closest('.ctx-share-option');
+        if (shareOpt) {
+            // Find the closest nomination card or result block
+            const card = shareOpt.closest('.nomination-card') || shareOpt.closest('.movie-card-standard');
+            if (card) {
+                captureSnapshot(card, shareOpt);
+                // Close context menu if open
+                const menu = document.getElementById('context-menu');
+                if (menu) menu.classList.add('hidden');
+            }
+        }
+    });
+}
+
+// Register with Master Initializer
+document.addEventListener("DOMContentLoaded", initPersistentUX);
 
 
 

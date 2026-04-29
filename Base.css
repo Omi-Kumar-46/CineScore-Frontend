@@ -1853,14 +1853,24 @@ details[open] {
   white-space: nowrap;
 }
 
-.pred-action-btn:hover {
+.pred-action-btn:not(.active-voted):hover {
   transform: scale(1.05) translateY(-2px);
   color: var(--color-accent);
   background: rgba(0, 85, 255, 0.05);
 }
 
-[data-theme="dark"] .pred-action-btn:hover {
+[data-theme="dark"] .pred-action-btn:not(.active-voted):hover {
   background: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] .pred-action-btn {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+[data-theme="dark"] .pred-action-btn:not(.active-voted):hover {
+  border-color: rgba(255, 255, 255, 0.16);
 }
 
 .pred-action-btn:active {
@@ -4969,7 +4979,6 @@ body {
   color: var(--color-accent-hover) !important;
 }
 
-/* Active buttons keep their success/danger colors on hover */
 .pred-action-btn.active-voted:hover {
   filter: brightness(1.1);
   transform: scale(1.05) !important;
